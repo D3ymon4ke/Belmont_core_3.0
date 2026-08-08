@@ -25,20 +25,48 @@ export default async function DashboardLayout({
       if (profile) {
         currentProfile = profile as Profile
       } else {
-        // Fallback for user without profile row yet
-        currentProfile = {
-          id: user.id,
-          username: user.email?.split('@')[0] || 'usuario',
-          display_name: user.user_metadata?.display_name || user.email?.split('@')[0] || 'Membro Belmont',
-          avatar_url: user.user_metadata?.avatar_url || null,
-          banner_url: null,
-          bio: 'Membro exclusivo da Mansão Belmont.',
-          status_text: 'Na Mansão Belmont',
-          is_admin: false,
-          belmont_coins: 100,
-          rank_title: 'Iniciado',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+        // Auto-heal: Insert missing profile row into Supabase profiles table
+        const cleanUsername = (user.user_metadata?.username || user.email?.split('@')[0] || 'membro')
+          .toLowerCase()
+          .replace(/[^a-z0-9_]/g, '')
+        const cleanName = user.user_metadata?.display_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Membro Belmont'
+
+        const { data: createdProfile } = await (supabase
+          .from('profiles') as any)
+          .upsert({
+            id: user.id,
+            username: cleanUsername,
+            display_name: cleanName,
+            avatar_url: user.user_metadata?.avatar_url || null,
+            status_text: 'Na Mansão Belmont',
+            is_admin: false,
+            belmont_coins: 100,
+            rank_title: 'Iniciado',
+          })
+          .select('*')
+          .single()
+
+        // Also ensure user progress row exists
+        await (supabase.from('user_progress') as any)
+          .upsert({ user_id: user.id, xp: 0, rank_title: 'Iniciado' })
+
+        if (createdProfile) {
+          currentProfile = createdProfile as Profile
+        } else {
+          currentProfile = {
+            id: user.id,
+            username: cleanUsername,
+            display_name: cleanName,
+            avatar_url: user.user_metadata?.avatar_url || null,
+            banner_url: null,
+            bio: 'Membro exclusivo da Mansão Belmont.',
+            status_text: 'Na Mansão Belmont',
+            is_admin: false,
+            belmont_coins: 100,
+            rank_title: 'Iniciado',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }
         }
       }
     }

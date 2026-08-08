@@ -224,7 +224,7 @@ export async function getAllProfilesService(): Promise<Profile[]> {
 }
 
 /**
- * Get Profile by Username
+ * Get Profile by Username (With Auto-Heal Upsert for authenticated users)
  */
 export async function getProfileByUsernameService(username: string): Promise<Profile | null> {
   const supabase = createClient()
@@ -235,10 +235,42 @@ export async function getProfileByUsernameService(username: string): Promise<Pro
       .eq('username', username)
       .single()
 
-    if (error || !data) {
-      return null
+    if (!error && data) {
+      return data as Profile
     }
-    return data as Profile
+
+    // Auto-heal: If authenticated user matches this username or if querying own profile
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) {
+      const cleanUsername = (user.user_metadata?.username || user.email?.split('@')[0] || 'membro')
+        .toLowerCase()
+        .replace(/[^a-z0-9_]/g, '')
+
+      if (cleanUsername === username.toLowerCase() || username === 'me') {
+        const cleanName = user.user_metadata?.display_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Membro Belmont'
+        const { data: newProf } = await (supabase
+          .from('profiles') as any)
+          .upsert({
+            id: user.id,
+            username: cleanUsername,
+            display_name: cleanName,
+            avatar_url: user.user_metadata?.avatar_url || null,
+            status_text: 'Na Mansão Belmont',
+            is_admin: false,
+            belmont_coins: 100,
+            rank_title: 'Iniciado',
+          })
+          .select('*')
+          .single()
+
+        await (supabase.from('user_progress') as any)
+          .upsert({ user_id: user.id, xp: 0, rank_title: 'Iniciado' })
+
+        if (newProf) return newProf as Profile
+      }
+    }
+
+    return null
   } catch (e) {
     return null
   }
