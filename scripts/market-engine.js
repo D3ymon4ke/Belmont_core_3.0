@@ -25,28 +25,25 @@ async function runMarketCycle() {
     }
 
     const timestamp = new Date().toISOString();
-    console.log(`\n[SYNTHETIC MARKET ENGINE] === Cycle Started at ${timestamp} ===`);
+    console.log(`\n[BELMONT MARKET ENGINE] === Cycle Started at ${timestamp} ===`);
 
-    // 2. Process each asset with full order book depth & dynamic trade execution
+    const getRandomAgent = () => agents[Math.floor(Math.random() * agents.length)];
+
+    // 2. Process each asset: place depth and guaranteed crossing trades
     for (const asset of assets) {
       const currentPrice = asset.current_price;
 
-      // Event Sentiment & Micro-trend Calculation (Sine Wave + Noise)
+      // Event Sentiment & Sine Wave fluctuation
       const assetEvents = activeEvents.filter(e => e.target_asset_id === asset.id);
       const eventSentiment = assetEvents.reduce((acc, curr) => acc + parseFloat(curr.impact_score || 0), 0);
 
-      // Micro-wave fluctuation
-      const wave = Math.sin(Date.now() / 30000) * 1.5; // Smooth 30s cycle wave
-      const noise = (Math.random() - 0.48) * 2; // Subtle random noise (-1 to +1)
+      const wave = Math.sin(Date.now() / 25000) * 1.5;
+      const noise = (Math.random() - 0.48) * 2;
       const priceDelta = Math.round(eventSentiment + wave + noise);
 
-      // Target central price (bounded > 5 Coins)
       const centralPrice = Math.max(5, currentPrice + priceDelta);
 
-      // Randomly pick NPCs for market making
-      const getRandomAgent = () => agents[Math.floor(Math.random() * agents.length)];
-
-      // Ensure NPCs have holding inventories for selling
+      // Top up holdings for all NPCs if needed
       for (const agent of agents) {
         await client.query(
           `INSERT INTO public.market_agent_holdings (agent_id, asset_id, quantity)
@@ -56,66 +53,52 @@ async function runMarketCycle() {
         );
       }
 
-      // A) Create BID Depth (3 Limit Buy Orders below central price)
-      for (let offset = 1; offset <= 3; offset++) {
-        const bidPrice = Math.max(1, centralPrice - offset);
-        const qty = Math.floor(Math.random() * 25) + 5;
-        const buyer = getRandomAgent();
-
-        await client.query(
-          `INSERT INTO public.orders (agent_id, asset_id, side, order_type, price, quantity, filled_quantity, status)
-           VALUES ($1, $2, 'buy', 'limit', $3, $4, 0, 'pending');`,
-          [buyer.id, asset.id, bidPrice, qty]
-        );
-      }
-
-      // B) Create ASK Depth (3 Limit Sell Orders above central price)
-      for (let offset = 1; offset <= 3; offset++) {
-        const askPrice = centralPrice + offset;
-        const qty = Math.floor(Math.random() * 25) + 5;
-        const seller = getRandomAgent();
-
-        await client.query(
-          `INSERT INTO public.orders (agent_id, asset_id, side, order_type, price, quantity, filled_quantity, status)
-           VALUES ($1, $2, 'sell', 'limit', $3, $4, 0, 'pending');`,
-          [seller.id, asset.id, askPrice, qty]
-        );
-      }
-
-      // C) Create 1 Crossing Trade Order at centralPrice to execute trade & move ticker
-      const tradeQty = Math.floor(Math.random() * 35) + 10;
-      const buyerNPC = getRandomAgent();
-      let sellerNPC = getRandomAgent();
-      if (sellerNPC.id === buyerNPC.id && agents.length > 1) {
-        sellerNPC = agents.find(a => a.id !== buyerNPC.id) || sellerNPC;
-      }
+      // A) Create Book Depth: 2 Bids below centralPrice and 2 Asks above centralPrice
+      const buyer1 = getRandomAgent();
+      const seller1 = getRandomAgent();
 
       await client.query(
         `INSERT INTO public.orders (agent_id, asset_id, side, order_type, price, quantity, filled_quantity, status)
          VALUES ($1, $2, 'buy', 'limit', $3, $4, 0, 'pending');`,
-        [buyerNPC.id, asset.id, centralPrice, tradeQty]
+        [buyer1.id, asset.id, Math.max(1, centralPrice - 1), Math.floor(Math.random() * 15) + 5]
       );
 
       await client.query(
         `INSERT INTO public.orders (agent_id, asset_id, side, order_type, price, quantity, filled_quantity, status)
          VALUES ($1, $2, 'sell', 'limit', $3, $4, 0, 'pending');`,
-        [sellerNPC.id, asset.id, centralPrice, tradeQty]
+        [seller1.id, asset.id, centralPrice + 1, Math.floor(Math.random() * 15) + 5]
       );
 
-      console.log(`[SYNTHETIC TRADE] ${asset.symbol}: ${buyerNPC.name} BUY & ${sellerNPC.name} SELL ${tradeQty}x @ ${centralPrice} Coins`);
+      // B) Create Guaranteed Match Order at centralPrice
+      const buyer2 = getRandomAgent();
+      let seller2 = getRandomAgent();
+      if (seller2.id === buyer2.id && agents.length > 1) {
+        seller2 = agents.find(a => a.id !== buyer2.id) || seller2;
+      }
+      const tradeQty = Math.floor(Math.random() * 20) + 5;
 
-      // D) Execute Matching Engine in PostgreSQL
-      const matchRes = await client.query('SELECT public.match_orders_for_asset($1);', [asset.id]);
+      await client.query(
+        `INSERT INTO public.orders (agent_id, asset_id, side, order_type, price, quantity, filled_quantity, status)
+         VALUES ($1, $2, 'buy', 'limit', $3, $4, 0, 'pending');`,
+        [buyer2.id, asset.id, centralPrice, tradeQty]
+      );
+
+      await client.query(
+        `INSERT INTO public.orders (agent_id, asset_id, side, order_type, price, quantity, filled_quantity, status)
+         VALUES ($1, $2, 'sell', 'limit', $3, $4, 0, 'pending');`,
+        [seller2.id, asset.id, centralPrice, tradeQty]
+      );
+
+      // C) Trigger PostgreSQL Matching Engine with explicit ::uuid cast
+      const matchRes = await client.query('SELECT public.match_orders_for_asset($1::uuid);', [asset.id]);
       const matches = matchRes.rows[0]?.match_orders_for_asset || 0;
 
-      if (matches > 0) {
-        console.log(`[MATCHING ENGINE] Executed ${matches} trade(s) for ${asset.symbol} -> New Price: ${centralPrice} Coins`);
-      }
+      console.log(`[TRADE] ${asset.symbol}: ${matches} trade(s) executed @ ${centralPrice} Coins`);
     }
 
-    console.log(`[SYNTHETIC MARKET ENGINE] === Cycle Completed Successfully ===`);
+    console.log(`[BELMONT MARKET ENGINE] === Cycle Completed Successfully ===`);
   } catch (err) {
-    console.error('[SYNTHETIC MARKET ENGINE ERROR]:', err);
+    console.error('[BELMONT MARKET ENGINE ERROR]:', err);
   } finally {
     await client.end();
   }
@@ -123,7 +106,7 @@ async function runMarketCycle() {
 
 // Continuous Daemon Loop (Every 10 seconds)
 const CYCLE_INTERVAL_MS = 10000;
-console.log(`[SYNTHETIC MARKET ENGINE DAEMON STARTED] Running cycle every ${CYCLE_INTERVAL_MS / 1000}s...`);
+console.log(`[BELMONT MARKET ENGINE DAEMON STARTED] Running cycle every ${CYCLE_INTERVAL_MS / 1000}s...`);
 
 runMarketCycle();
 setInterval(runMarketCycle, CYCLE_INTERVAL_MS);

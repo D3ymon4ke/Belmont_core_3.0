@@ -11,6 +11,7 @@ interface Candle {
   low: number
   close: number
   volume: number
+  timestampMs: number
 }
 
 interface CandleChartProps {
@@ -35,45 +36,58 @@ export const CandleChart: React.FC<CandleChartProps> = ({ assetId, currentPrice 
           .select('*')
           .eq('asset_id', assetId)
           .order('created_at', { ascending: true })
-          .limit(150)
+          .limit(200)
 
-        if (!priceLogs || priceLogs.length === 0) {
-          const fallbackCandle: Candle = {
-            time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-            open: currentPrice,
-            high: currentPrice + 1,
-            low: Math.max(1, currentPrice - 1),
-            close: currentPrice,
-            volume: 10,
+        const logs = priceLogs || []
+        const now = Date.now()
+        const stepMs = timeframe === '1m' ? 60000 : timeframe === '5m' ? 300000 : timeframe === '15m' ? 900000 : timeframe === '1h' ? 3600000 : 86400000
+        const totalBars = 15
+
+        // Generate 15 continuous time slots ending at `now`
+        const slots: Candle[] = []
+        let lastPrice = currentPrice
+
+        for (let i = totalBars - 1; i >= 0; i--) {
+          const slotEndTime = now - (i * stepMs)
+          const slotStartTime = slotEndTime - stepMs
+
+          // Find logs in this time window
+          const logsInSlot = logs.filter((l: any) => {
+            const t = new Date(l.created_at).getTime()
+            return t >= slotStartTime && t <= slotEndTime
+          })
+
+          const timeFormatted = new Date(slotEndTime).toLocaleTimeString('pt-BR', {
+            hour: '2-digit',
+            minute: '2-digit',
+          })
+
+          if (logsInSlot.length > 0) {
+            const prices = logsInSlot.map((l: any) => l.price)
+            const open = prices[0]
+            const close = prices[prices.length - 1]
+            const high = Math.max(...prices)
+            const low = Math.min(...prices)
+            const volume = logsInSlot.reduce((sum: number, l: any) => sum + (l.volume || 1), 0)
+
+            lastPrice = close
+            slots.push({ time: timeFormatted, open, high, low, close, volume, timestampMs: slotEndTime })
+          } else {
+            // Carry forward last price for smooth continuous chart
+            slots.push({
+              time: timeFormatted,
+              open: lastPrice,
+              high: lastPrice,
+              low: lastPrice,
+              close: lastPrice,
+              volume: 0,
+              timestampMs: slotEndTime,
+            })
           }
-          setCandles([fallbackCandle])
-          setHoveredCandle(fallbackCandle)
-          setIsLoading(false)
-          return
         }
 
-        // Group into candlestick bars
-        const aggregated: Candle[] = []
-        const bucketSize = timeframe === '1m' ? 1 : timeframe === '5m' ? 5 : timeframe === '15m' ? 15 : timeframe === '1h' ? 60 : 1440
-
-        for (let i = 0; i < priceLogs.length; i += Math.max(1, Math.floor(bucketSize / 2))) {
-          const slice = priceLogs.slice(i, i + Math.max(1, Math.floor(bucketSize / 2)))
-          if (slice.length === 0) continue
-
-          const prices = slice.map((p: any) => p.price)
-          const open = prices[0]
-          const close = prices[prices.length - 1]
-          const high = Math.max(...prices)
-          const low = Math.min(...prices)
-          const volume = slice.reduce((sum: number, p: any) => sum + (p.volume || 1), 0)
-          const time = new Date(slice[0].created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-
-          aggregated.push({ time, open, high, low, close, volume })
-        }
-
-        const finalCandles = aggregated.slice(-20)
-        setCandles(finalCandles)
-        setHoveredCandle(finalCandles[finalCandles.length - 1] || null)
+        setCandles(slots)
+        setHoveredCandle(slots[slots.length - 1] || null)
       } catch (e) {
         setCandles([])
       } finally {
@@ -92,7 +106,7 @@ export const CandleChart: React.FC<CandleChartProps> = ({ assetId, currentPrice 
   const minPrice = candles.length > 0 ? Math.max(1, Math.min(...candles.map((c) => c.low)) - 1) : Math.max(1, currentPrice - 3)
   const priceRange = Math.max(1, maxPrice - minPrice)
 
-  const maxVolume = candles.length > 0 ? Math.max(...candles.map((c) => c.volume)) : 100
+  const maxVolume = candles.length > 0 ? Math.max(...candles.map((c) => c.volume), 10) : 100
 
   // Price Grid Levels
   const gridLevels = [
@@ -173,16 +187,16 @@ export const CandleChart: React.FC<CandleChartProps> = ({ assetId, currentPrice 
               const candleIsBullish = c.close >= c.open
 
               // Calculate Percentages
-              const highPct = Math.min(95, Math.max(5, ((c.high - minPrice) / priceRange) * 85))
-              const lowPct = Math.min(95, Math.max(2, ((c.low - minPrice) / priceRange) * 85))
-              const openPct = Math.min(95, Math.max(5, ((c.open - minPrice) / priceRange) * 85))
-              const closePct = Math.min(95, Math.max(5, ((c.close - minPrice) / priceRange) * 85))
+              const highPct = Math.min(95, Math.max(5, ((c.high - minPrice) / priceRange) * 80))
+              const lowPct = Math.min(95, Math.max(2, ((c.low - minPrice) / priceRange) * 80))
+              const openPct = Math.min(95, Math.max(5, ((c.open - minPrice) / priceRange) * 80))
+              const closePct = Math.min(95, Math.max(5, ((c.close - minPrice) / priceRange) * 80))
 
               const bodyTop = Math.max(openPct, closePct)
               const bodyBottom = Math.min(openPct, closePct)
-              const bodyHeight = Math.max(8, bodyTop - bodyBottom)
+              const bodyHeight = Math.max(6, bodyTop - bodyBottom)
 
-              const volumeHeight = Math.min(25, Math.max(4, (c.volume / maxVolume) * 22))
+              const volumeHeight = Math.min(25, Math.max(2, (c.volume / maxVolume) * 22))
 
               return (
                 <div
@@ -192,7 +206,7 @@ export const CandleChart: React.FC<CandleChartProps> = ({ assetId, currentPrice 
                 >
                   {/* Volume Bar (Bottom Sub-chart) */}
                   <div
-                    className={`w-full max-w-[12px] rounded-t-sm opacity-30 ${candleIsBullish ? 'bg-emerald-500' : 'bg-red-500'}`}
+                    className={`w-full max-w-[12px] rounded-t-sm opacity-35 ${candleIsBullish ? 'bg-emerald-500' : 'bg-red-500'}`}
                     style={{ height: `${volumeHeight}%` }}
                   />
 
