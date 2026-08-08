@@ -220,10 +220,6 @@ CREATE TABLE IF NOT EXISTS public.user_achievements (
 
 CREATE INDEX IF NOT EXISTS idx_user_achievements_user ON public.user_achievements(user_id);
 
--- ===================================================
--- FASE 5: TABELAS DE BANCO, BOLSA & MERCADO
--- ===================================================
-
 -- 15. BANK ACCOUNTS TABLE
 CREATE TABLE IF NOT EXISTS public.bank_accounts (
   user_id UUID PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
@@ -281,7 +277,17 @@ CREATE TABLE IF NOT EXISTS public.market_agents (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 20. ORDERS TABLE (BOOK DE ORDENS)
+-- 20. MARKET AGENT HOLDINGS (POSIÇÕES DOS NPCs)
+CREATE TABLE IF NOT EXISTS public.market_agent_holdings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id UUID NOT NULL REFERENCES public.market_agents(id) ON DELETE CASCADE,
+  asset_id UUID NOT NULL REFERENCES public.assets(id) ON DELETE CASCADE,
+  quantity INTEGER NOT NULL DEFAULT 0 CHECK (quantity >= 0),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(agent_id, asset_id)
+);
+
+-- 21. ORDERS TABLE (BOOK DE ORDENS)
 CREATE TABLE IF NOT EXISTS public.orders (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
@@ -299,7 +305,7 @@ CREATE TABLE IF NOT EXISTS public.orders (
 
 CREATE INDEX IF NOT EXISTS idx_orders_asset_status ON public.orders(asset_id, status, side, price, created_at);
 
--- 21. TRADES TABLE (EXECUÇÕES DE MERCADO)
+-- 22. TRADES TABLE (EXECUÇÕES DE MERCADO)
 CREATE TABLE IF NOT EXISTS public.trades (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   asset_id UUID NOT NULL REFERENCES public.assets(id) ON DELETE CASCADE,
@@ -314,7 +320,7 @@ CREATE TABLE IF NOT EXISTS public.trades (
 
 CREATE INDEX IF NOT EXISTS idx_trades_asset ON public.trades(asset_id, created_at DESC);
 
--- 22. HOLDINGS TABLE (CARTEIRA DE INVESTIMENTOS)
+-- 23. HOLDINGS TABLE (CARTEIRA DE INVESTIMENTOS DOS USUÁRIOS)
 CREATE TABLE IF NOT EXISTS public.holdings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
@@ -327,16 +333,12 @@ CREATE TABLE IF NOT EXISTS public.holdings (
 
 CREATE INDEX IF NOT EXISTS idx_holdings_user ON public.holdings(user_id);
 
--- ===================================================
--- FASE 6: EVENTOS ECONÔMICOS & NOTÍCIAS OFICIAIS
--- ===================================================
-
--- 23. ECONOMIC EVENTS TABLE
+-- 24. ECONOMIC EVENTS TABLE
 CREATE TABLE IF NOT EXISTS public.economic_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title TEXT NOT NULL,
   description TEXT NOT NULL,
-  type TEXT NOT NULL, -- 'positive', 'negative', 'neutral', 'rumor'
+  type TEXT NOT NULL,
   target_asset_id UUID REFERENCES public.assets(id) ON DELETE SET NULL,
   impact_score NUMERIC(4,2) DEFAULT 0.00,
   is_active BOOLEAN DEFAULT TRUE,
@@ -347,7 +349,7 @@ CREATE TABLE IF NOT EXISTS public.economic_events (
 
 CREATE INDEX IF NOT EXISTS idx_economic_events_active ON public.economic_events(is_active, target_asset_id);
 
--- 24. NEWS ARTICLES TABLE
+-- 25. NEWS ARTICLES TABLE
 CREATE TABLE IF NOT EXISTS public.news_articles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title TEXT NOT NULL,
@@ -363,7 +365,7 @@ CREATE TABLE IF NOT EXISTS public.news_articles (
 CREATE INDEX IF NOT EXISTS idx_news_published ON public.news_articles(is_published, published_at DESC);
 
 -- ===================================================
--- FUNCTIONS & RPCs ATÔMICAS DE SEGURANÇA E MATCHING
+-- FUNCTIONS & RPCs ATÔMICAS DE SEGURANÇA, CANCELAMENTO E MATCHING
 -- ===================================================
 
 CREATE OR REPLACE FUNCTION public.bank_deposit(
@@ -544,6 +546,49 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+CREATE OR REPLACE FUNCTION public.cancel_order(
+  p_order_id UUID
+)
+RETURNS BOOLEAN AS $$
+DECLARE
+  v_order RECORD;
+  v_remaining INTEGER;
+  v_refund_cost INTEGER;
+BEGIN
+  SELECT * INTO v_order
+  FROM public.orders
+  WHERE id = p_order_id AND user_id = auth.uid() AND status = 'pending'
+  FOR UPDATE;
+
+  IF v_order.id IS NULL THEN
+    RAISE EXCEPTION 'Ordem pendente não encontrada ou você não tem permissão para cancelá-la.';
+  END IF;
+
+  v_remaining := v_order.quantity - v_order.filled_quantity;
+
+  IF v_remaining <= 0 THEN
+    RAISE EXCEPTION 'Esta ordem já foi completamente executada.';
+  END IF;
+
+  UPDATE public.orders
+  SET status = 'cancelled'
+  WHERE id = p_order_id;
+
+  IF v_order.side = 'buy' THEN
+    v_refund_cost := v_order.price * v_remaining;
+    UPDATE public.profiles
+    SET belmont_coins = belmont_coins + v_refund_cost,
+        updated_at = NOW()
+    WHERE id = v_order.user_id;
+
+    INSERT INTO public.coin_transactions (user_id, amount, type, description)
+    VALUES (v_order.user_id, v_refund_cost, 'order_cancel_refund', 'Estorno de cancelamento de ordem de compra');
+  END IF;
+
+  RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 CREATE OR REPLACE FUNCTION public.match_orders_for_asset(
   p_asset_id UUID
 )
@@ -613,6 +658,16 @@ BEGIN
 
       INSERT INTO public.coin_transactions (user_id, amount, type, description)
       VALUES (v_buy_order.user_id, -v_total_cost, 'market_buy', 'Compra na Bolsa Belmont');
+    ELSIF v_buy_order.agent_id IS NOT NULL THEN
+      INSERT INTO public.market_agent_holdings (agent_id, asset_id, quantity)
+      VALUES (v_buy_order.agent_id, p_asset_id, v_exec_qty)
+      ON CONFLICT (agent_id, asset_id) DO UPDATE
+      SET quantity = market_agent_holdings.quantity + v_exec_qty,
+          updated_at = NOW();
+
+      UPDATE public.market_agents
+      SET cash_balance = GREATEST(0, cash_balance - v_total_cost)
+      WHERE id = v_buy_order.agent_id;
     END IF;
 
     IF v_sell_order.user_id IS NOT NULL THEN
@@ -627,6 +682,15 @@ BEGIN
 
       INSERT INTO public.coin_transactions (user_id, amount, type, description)
       VALUES (v_sell_order.user_id, v_total_cost, 'market_sell', 'Venda na Bolsa Belmont');
+    ELSIF v_sell_order.agent_id IS NOT NULL THEN
+      UPDATE public.market_agent_holdings
+      SET quantity = GREATEST(0, quantity - v_exec_qty),
+          updated_at = NOW()
+      WHERE agent_id = v_sell_order.agent_id AND asset_id = p_asset_id;
+
+      UPDATE public.market_agents
+      SET cash_balance = cash_balance + v_total_cost
+      WHERE id = v_sell_order.agent_id;
     END IF;
 
     UPDATE public.assets
@@ -667,12 +731,14 @@ ALTER TABLE public.bank_transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.assets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.asset_prices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.market_agents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.market_agent_holdings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.trades ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.holdings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.economic_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.news_articles ENABLE ROW LEVEL SECURITY;
 
+-- Explicit RLS Policies
 DROP POLICY IF EXISTS "Profiles - read all authenticated" ON public.profiles;
 CREATE POLICY "Profiles - read all authenticated" ON public.profiles FOR SELECT USING (auth.role() = 'authenticated');
 
@@ -682,11 +748,11 @@ CREATE POLICY "Profiles - update own profile" ON public.profiles FOR UPDATE USIN
 DROP POLICY IF EXISTS "Profiles - insert own profile" ON public.profiles;
 CREATE POLICY "Profiles - insert own profile" ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
 
-DROP POLICY IF EXISTS "Bank accounts - read own" ON public.bank_accounts;
-CREATE POLICY "Bank accounts - read own" ON public.bank_accounts FOR SELECT USING (user_id = auth.uid() OR public.is_admin());
+DROP POLICY IF EXISTS "Bank accounts - read authenticated" ON public.bank_accounts;
+CREATE POLICY "Bank accounts - read authenticated" ON public.bank_accounts FOR SELECT USING (auth.role() = 'authenticated');
 
-DROP POLICY IF EXISTS "Bank transactions - read own" ON public.bank_transactions;
-CREATE POLICY "Bank transactions - read own" ON public.bank_transactions FOR SELECT USING (user_id = auth.uid() OR public.is_admin());
+DROP POLICY IF EXISTS "Bank transactions - read authenticated" ON public.bank_transactions;
+CREATE POLICY "Bank transactions - read authenticated" ON public.bank_transactions FOR SELECT USING (auth.role() = 'authenticated');
 
 DROP POLICY IF EXISTS "Assets - read all authenticated" ON public.assets;
 CREATE POLICY "Assets - read all authenticated" ON public.assets FOR SELECT USING (auth.role() = 'authenticated');
@@ -697,17 +763,26 @@ CREATE POLICY "Asset prices - read all authenticated" ON public.asset_prices FOR
 DROP POLICY IF EXISTS "Market agents - read all authenticated" ON public.market_agents;
 CREATE POLICY "Market agents - read all authenticated" ON public.market_agents FOR SELECT USING (auth.role() = 'authenticated');
 
+DROP POLICY IF EXISTS "Market agent holdings - read all authenticated" ON public.market_agent_holdings;
+CREATE POLICY "Market agent holdings - read all authenticated" ON public.market_agent_holdings FOR SELECT USING (auth.role() = 'authenticated');
+
 DROP POLICY IF EXISTS "Orders - read all authenticated" ON public.orders;
 CREATE POLICY "Orders - read all authenticated" ON public.orders FOR SELECT USING (auth.role() = 'authenticated');
 
-DROP POLICY IF EXISTS "Orders - insert own" ON public.orders;
-CREATE POLICY "Orders - insert own" ON public.orders FOR INSERT WITH CHECK (auth.uid() = user_id OR public.is_admin());
+DROP POLICY IF EXISTS "Orders - insert authenticated" ON public.orders;
+CREATE POLICY "Orders - insert authenticated" ON public.orders FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Orders - update authenticated" ON public.orders;
+CREATE POLICY "Orders - update authenticated" ON public.orders FOR UPDATE USING (auth.role() = 'authenticated');
 
 DROP POLICY IF EXISTS "Trades - read all authenticated" ON public.trades;
 CREATE POLICY "Trades - read all authenticated" ON public.trades FOR SELECT USING (auth.role() = 'authenticated');
 
 DROP POLICY IF EXISTS "Holdings - read all authenticated" ON public.holdings;
 CREATE POLICY "Holdings - read all authenticated" ON public.holdings FOR SELECT USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Coin transactions - read authenticated" ON public.coin_transactions;
+CREATE POLICY "Coin transactions - read authenticated" ON public.coin_transactions FOR SELECT USING (auth.role() = 'authenticated');
 
 DROP POLICY IF EXISTS "Economic events - read all authenticated" ON public.economic_events;
 CREATE POLICY "Economic events - read all authenticated" ON public.economic_events FOR SELECT USING (auth.role() = 'authenticated');
@@ -722,7 +797,7 @@ DROP POLICY IF EXISTS "News articles - admin manage" ON public.news_articles;
 CREATE POLICY "News articles - admin manage" ON public.news_articles FOR ALL USING (public.is_admin());
 
 -- ===================================================
--- SEED DATA: ATIVOS, EVENTOS E NOTÍCIAS
+-- SEED DATA: ATIVOS, NPCs, HOLDINGS DOS NPCs
 -- ===================================================
 
 INSERT INTO public.conversations (id, title, is_group, is_general_chat)
@@ -739,46 +814,26 @@ VALUES
   ('a0000000-0000-0000-0000-000000000006', 'HELL', 'Hellfire Venture', 'Fundo especulativo para alavancagem e projetos de alta incerteza.', 55, -5.20, 19500)
 ON CONFLICT (symbol) DO NOTHING;
 
-INSERT INTO public.economic_events (id, title, description, type, target_asset_id, impact_score, is_active)
+INSERT INTO public.market_agents (id, name, personality, cash_balance)
 VALUES
-  (
-    'e0000000-0000-0000-0000-000000000001',
-    'Expansão da Infraestrutura da Mansão',
-    'Castle Holding confirma aporte para ampliação das dependências e novos servidores privados.',
-    'positive',
-    'a0000000-0000-0000-0000-000000000003',
-    0.35,
-    TRUE
-  ),
-  (
-    'e0000000-0000-0000-0000-000000000002',
-    'Rumor de Criptografia Noturna',
-    'Especula-se que a Nocturne Energy fechou contrato de comunicação segura com entidade governamental.',
-    'rumor',
-    'a0000000-0000-0000-0000-000000000004',
-    0.50,
-    TRUE
-  )
-ON CONFLICT (id) DO NOTHING;
+  ('b0000000-0000-0000-0000-000000000001', 'Victor Belmont (NPC)', 'accumulator', 100000),
+  ('b0000000-0000-0000-0000-000000000002', 'Carmilla Trades (NPC)', 'trader', 75000),
+  ('b0000000-0000-0000-0000-000000000003', 'Dracula Ventures (NPC)', 'speculator', 150000),
+  ('b0000000-0000-0000-0000-000000000004', 'Sypha Analytics (NPC)', 'conservative', 60000)
+ON CONFLICT (name) DO NOTHING;
 
-INSERT INTO public.news_articles (id, title, summary, content, event_id, related_asset_id, is_published)
+INSERT INTO public.market_agent_holdings (agent_id, asset_id, quantity)
 VALUES
-  (
-    'c0000000-0000-0000-0000-000000000001',
-    'Castle Holding Anuncia Expansão de Infraestrutura na Mansão',
-    'A diretoria da Castle Holding confirmou nesta manhã um novo aporte de liquidez.',
-    'A Castle Holding oficializou o investimento na infraestrutura de servidores e segurança da Mansão Belmont. A expectativa de mercado é de fortalecimento nos ativos operacionais.',
-    'e0000000-0000-0000-0000-000000000001',
-    'a0000000-0000-0000-0000-000000000003',
-    TRUE
-  ),
-  (
-    'c0000000-0000-0000-0000-000000000002',
-    'Rumores sobre Nova Tecnologia da Nocturne Energy Movimentam Corretores',
-    'Fontes anônimas relatam tratativas da Nocturne para fornecimento de canais criptografados.',
-    'Rumores no mercado financeiro noturno apontam para a iminente assinatura de contrato exclusivo pela Nocturne Energy. Agentes do mercado já observam movimentações nos livros de ofertas.',
-    'e0000000-0000-0000-0000-000000000002',
-    'a0000000-0000-0000-0000-000000000004',
-    TRUE
-  )
-ON CONFLICT (id) DO NOTHING;
+  ('b0000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000001', 500),
+  ('b0000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000002', 300),
+  ('b0000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000003', 200),
+  ('b0000000-0000-0000-0000-000000000002', 'a0000000-0000-0000-0000-000000000001', 300),
+  ('b0000000-0000-0000-0000-000000000002', 'a0000000-0000-0000-0000-000000000002', 500),
+  ('b0000000-0000-0000-0000-000000000002', 'a0000000-0000-0000-0000-000000000004', 400),
+  ('b0000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000001', 800),
+  ('b0000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000006', 400),
+  ('b0000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000005', 300),
+  ('b0000000-0000-0000-0000-000000000004', 'a0000000-0000-0000-0000-000000000003', 400),
+  ('b0000000-0000-0000-0000-000000000004', 'a0000000-0000-0000-0000-000000000005', 300),
+  ('b0000000-0000-0000-0000-000000000004', 'a0000000-0000-0000-0000-000000000001', 200)
+ON CONFLICT (agent_id, asset_id) DO NOTHING;

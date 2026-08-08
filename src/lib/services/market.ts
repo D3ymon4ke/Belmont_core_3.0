@@ -133,7 +133,6 @@ export async function createOrderService(
       return { success: false, error: 'Preço e quantidade devem ser maiores que zero.' }
     }
 
-    // Check user balance or asset holdings
     if (side === 'buy') {
       const totalCost = price * quantity
       const { data: profile } = await (supabase.from('profiles') as any).select('belmont_coins').eq('id', user.id).single()
@@ -147,7 +146,6 @@ export async function createOrderService(
       }
     }
 
-    // Insert Order
     const { data: order, error } = await (supabase
       .from('orders') as any)
       .insert({
@@ -165,8 +163,8 @@ export async function createOrderService(
 
     if (error) return { success: false, error: error.message }
 
-    // Execute matching & NPC simulation
-    await simulateMarketAgentsService(assetId)
+    // Execute matching
+    await (supabase as any).rpc('match_orders_for_asset', { p_asset_id: assetId })
 
     return { success: true }
   } catch (e: any) {
@@ -175,32 +173,15 @@ export async function createOrderService(
 }
 
 /**
- * NPC Market Liquidity & Simulation Engine
+ * Cancel Pending Order via RPC
  */
-export async function simulateMarketAgentsService(assetId: string): Promise<void> {
+export async function cancelOrderService(orderId: string): Promise<{ success: boolean; error?: string }> {
   const supabase = createClient()
   try {
-    const { data: asset } = await (supabase.from('assets') as any).select('*').eq('id', assetId).single()
-    if (!asset) return
-
-    const { data: agents } = await (supabase.from('market_agents') as any).select('*').eq('is_active', true)
-    if (!agents || agents.length === 0) return
-
-    // Pick random NPC agent to provide market depth
-    const agent = agents[Math.floor(Math.random() * agents.length)]
-    const currentPrice = asset.current_price
-
-    // Spread generation around current price
-    const buyPrice = Math.max(1, currentPrice - Math.floor(Math.random() * 3))
-    const sellPrice = currentPrice + Math.floor(Math.random() * 3) + 1
-    const qty = Math.floor(Math.random() * 10) + 1
-
-    // Post NPC orders
-    await (supabase.from('orders') as any).insert([
-      { agent_id: agent.id, asset_id: assetId, side: 'buy', order_type: 'limit', price: buyPrice, quantity: qty, status: 'pending' },
-      { agent_id: agent.id, asset_id: assetId, side: 'sell', order_type: 'limit', price: sellPrice, quantity: qty, status: 'pending' },
-    ])
-  } catch (e) {
-    // Ignore NPC simulation errors silently
+    const { error } = await (supabase as any).rpc('cancel_order', { p_order_id: orderId })
+    if (error) return { success: false, error: error.message }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message || 'Erro ao cancelar ordem.' }
   }
 }

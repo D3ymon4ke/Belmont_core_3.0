@@ -25,10 +25,9 @@ async function runMarketCycle() {
     }
 
     const timestamp = new Date().toISOString();
-    console.log(`\n[MARKET ENGINE] === Cycle Started at ${timestamp} ===`);
-    console.log(`[EVENTS] ${activeEvents.length} active economic event(s) in progress.`);
+    console.log(`\n[BELMONT MARKET ENGINE] === Cycle Started at ${timestamp} ===`);
 
-    // 2. Process each asset considering active economic sentiment
+    // 2. Process each asset with Market Making liquidity (Spread placement around current price)
     for (const asset of assets) {
       const currentPrice = asset.current_price;
 
@@ -36,57 +35,56 @@ async function runMarketCycle() {
       const assetEvents = activeEvents.filter(e => e.target_asset_id === asset.id);
       const sentimentScore = assetEvents.reduce((acc, curr) => acc + parseFloat(curr.impact_score || 0), 0);
 
-      const agent = agents[Math.floor(Math.random() * agents.length)];
+      // Select two random NPCs to provide Bid and Ask liquidity
+      const buyerAgent = agents[Math.floor(Math.random() * agents.length)];
+      let sellerAgent = agents[Math.floor(Math.random() * agents.length)];
 
-      let side = Math.random() > 0.5 ? 'buy' : 'sell';
-      let priceOffset = 0;
-      let qtyMultiplier = 1;
-
-      // Sentiment influence
-      if (sentimentScore > 0) {
-        // Bullish bias
-        side = Math.random() > 0.3 ? 'buy' : 'sell';
-        priceOffset = Math.floor(sentimentScore * 3);
-        if (agent.personality === 'speculator') qtyMultiplier = 2;
-      } else if (sentimentScore < 0) {
-        // Bearish bias
-        side = Math.random() > 0.3 ? 'sell' : 'buy';
-        priceOffset = -Math.floor(Math.abs(sentimentScore) * 3);
+      if (buyerAgent.id === sellerAgent.id && agents.length > 1) {
+        sellerAgent = agents.find(a => a.id !== buyerAgent.id) || sellerAgent;
       }
 
-      // Personality specific overrides
-      if (agent.personality === 'accumulator') {
-        if (sentimentScore >= 0) side = 'buy';
-      } else if (agent.personality === 'trader') {
-        priceOffset += (side === 'buy' ? -1 : 1);
-      } else if (agent.personality === 'conservative') {
-        priceOffset += (side === 'buy' ? -2 : 2);
-      }
+      // Check seller NPC holdings
+      const holdingRes = await client.query(
+        'SELECT quantity FROM public.market_agent_holdings WHERE agent_id = $1 AND asset_id = $2;',
+        [sellerAgent.id, asset.id]
+      );
+      const sellerQtyAvailable = holdingRes.rows[0]?.quantity || 0;
 
-      const orderPrice = Math.max(1, currentPrice + priceOffset);
-      const orderQty = (Math.floor(Math.random() * 10) + 1) * qtyMultiplier;
+      // Determine Prices around current price
+      const bidPrice = Math.max(1, currentPrice - (sentimentScore < 0 ? 2 : 1));
+      const askPrice = currentPrice + (sentimentScore > 0 ? 1 : 2);
+      const qty = Math.floor(Math.random() * 8) + 2;
 
-      // Insert real order into book
+      // Place BUY Limit Order from Buyer NPC
       await client.query(
         `INSERT INTO public.orders (agent_id, asset_id, side, order_type, price, quantity, filled_quantity, status)
-         VALUES ($1, $2, $3, 'limit', $4, $5, 0, 'pending');`,
-        [agent.id, asset.id, side, orderPrice, orderQty]
+         VALUES ($1, $2, 'buy', 'limit', $3, $4, 0, 'pending');`,
+        [buyerAgent.id, asset.id, bidPrice, qty]
       );
+      console.log(`[MARKET MAKER] ${buyerAgent.name} -> BID ${qty}x ${asset.symbol} @ ${bidPrice} Coins`);
 
-      console.log(`[NPC] ${agent.name} (${agent.personality}) -> ${side.toUpperCase()} ${orderQty}x ${asset.symbol} @ ${orderPrice} Coins (Sentiment: ${sentimentScore.toFixed(2)})`);
+      // Place SELL Limit Order from Seller NPC (if holding > 0)
+      if (sellerQtyAvailable >= qty) {
+        await client.query(
+          `INSERT INTO public.orders (agent_id, asset_id, side, order_type, price, quantity, filled_quantity, status)
+           VALUES ($1, $2, 'sell', 'limit', $3, $4, 0, 'pending');`,
+          [sellerAgent.id, asset.id, askPrice, qty]
+        );
+        console.log(`[MARKET MAKER] ${sellerAgent.name} -> ASK ${qty}x ${asset.symbol} @ ${askPrice} Coins`);
+      }
 
       // 3. Trigger PostgreSQL Matching Engine
       const matchRes = await client.query('SELECT public.match_orders_for_asset($1);', [asset.id]);
       const matches = matchRes.rows[0]?.match_orders_for_asset || 0;
 
       if (matches > 0) {
-        console.log(`[TRADE] ${matches} match trade(s) executed for ${asset.symbol}`);
+        console.log(`[MATCHING ENGINE] ${matches} trade(s) executed for ${asset.symbol}`);
       }
     }
 
-    console.log(`[MARKET ENGINE] === Cycle Completed Successfully ===`);
+    console.log(`[BELMONT MARKET ENGINE] === Cycle Completed Successfully ===`);
   } catch (err) {
-    console.error('[MARKET ENGINE ERROR]:', err);
+    console.error('[BELMONT MARKET ENGINE ERROR]:', err);
   } finally {
     await client.end();
   }

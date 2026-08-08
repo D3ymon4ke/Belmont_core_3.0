@@ -15,12 +15,16 @@ import {
   RefreshCw,
   Newspaper,
   Calendar,
+  XCircle,
+  Activity,
+  Layers,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { CandleChart } from '@/components/market/CandleChart'
 import {
   getAssetsService,
   getOrderBookService,
@@ -28,6 +32,7 @@ import {
   getUserOrdersService,
   getTradeHistoryService,
   createOrderService,
+  cancelOrderService,
 } from '@/lib/services/market'
 import { getNewsArticlesService } from '@/lib/services/news'
 import { createClient } from '@/lib/supabase/client'
@@ -85,7 +90,17 @@ export default function MarketPage() {
 
   useEffect(() => {
     loadMarketData()
-  }, [])
+
+    // 10s Polling Loop
+    const intervalId = setInterval(() => {
+      if (selectedAsset) {
+        getOrderBookService(selectedAsset.id).then(setOrderBook)
+        getTradeHistoryService(selectedAsset.id).then(setTrades)
+      }
+    }, 10000)
+
+    return () => clearInterval(intervalId)
+  }, [selectedAsset])
 
   useEffect(() => {
     if (selectedAsset) {
@@ -115,7 +130,7 @@ export default function MarketPage() {
 
     const res = await createOrderService(selectedAsset.id, orderSide, orderType, price, quantity)
     if (res.success) {
-      setFeedback({ type: 'success', message: `Ordem de ${orderSide.toUpperCase()} registrada com sucesso na Bolsa!` })
+      setFeedback({ type: 'success', message: `Ordem de ${orderSide.toUpperCase()} registrada com sucesso!` })
       setQuantityInput('')
       await loadMarketData()
     } else {
@@ -124,26 +139,50 @@ export default function MarketPage() {
     setTimeout(() => setFeedback(null), 4000)
   }
 
+  const handleCancelOrder = async (orderId: string) => {
+    const res = await cancelOrderService(orderId)
+    if (res.success) {
+      setFeedback({ type: 'success', message: 'Ordem cancelada e saldo estornado com sucesso!' })
+      await loadMarketData()
+    } else {
+      setFeedback({ type: 'error', message: res.error || 'Falha ao cancelar ordem.' })
+    }
+    setTimeout(() => setFeedback(null), 4000)
+  }
+
   const userHoldingForCurrentAsset = holdings.find((h) => h.asset_id === selectedAsset?.id)
   const totalHoldingsValue = holdings.reduce((sum, h) => sum + (h.quantity * (h.asset?.current_price || 0)), 0)
 
+  // Calculate Spread
+  const bestBid = orderBook.buyOrders[0]?.price || 0
+  const bestAsk = orderBook.sellOrders[0]?.price || 0
+  const spread = bestAsk > 0 && bestBid > 0 ? Math.max(0, bestAsk - bestBid) : 0
+
+  const calculatedCost = (parseInt(priceInput) || 0) * (parseInt(quantityInput) || 0)
+
   return (
-    <div className="max-w-6xl mx-auto space-y-6 animate-fadeIn pb-12">
+    <div className="max-w-7xl mx-auto space-y-6 animate-fadeIn pb-12">
       {/* Header & Terminal Banner */}
       <div className="glass-card rounded-3xl p-6 sm:p-8 border border-belmont-border relative overflow-hidden bg-mansion-radial">
         <div className="absolute top-0 right-0 w-96 h-96 bg-belmont-crimson/15 rounded-full blur-3xl pointer-events-none" />
 
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-xs font-semibold text-amber-300">
-              <BarChart3 className="w-3.5 h-3.5" />
-              <span>Mercado Vivo da Mansão Belmont • Terminal Ativo 24/7</span>
+            <div className="flex items-center gap-3">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-xs font-semibold text-amber-300">
+                <BarChart3 className="w-3.5 h-3.5" />
+                <span>Mercado Vivo • Engine 24/7 na VPS</span>
+              </div>
+              <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-400">
+                <Activity className="w-3.5 h-3.5 animate-pulse" />
+                MERCADO ATIVO
+              </span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold font-display tracking-tight text-belmont-text-primary">
               Bolsa Belmont
             </h1>
             <p className="text-xs sm:text-sm text-belmont-text-secondary">
-              Negocie ativos fictícios com Belmont Coins, acompanhe a liquidez do book e a atividade do mercado.
+              Terminal financeiro autônomo com liquidez contínua dos NPCs, livro de ofertas e gráficos de Candlesticks.
             </p>
           </div>
 
@@ -159,7 +198,7 @@ export default function MarketPage() {
         </div>
       </div>
 
-      {/* Assets Selector Row */}
+      {/* Assets Selector Ticker Row */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {assets.map((asset) => {
           const isSelected = selectedAsset?.id === asset.id
@@ -188,54 +227,50 @@ export default function MarketPage() {
         })}
       </div>
 
-      {/* Main Terminal Grid */}
+      {/* Main Terminal Grid: Candlestick Chart + Order Book + Order Form */}
       {selectedAsset && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left 2 Columns: Selected Asset Header & Order Book & Recent Trades */}
+          {/* Left 2 Columns: Candlestick Chart & Professional Order Book */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Active Asset Info Card */}
-            <div className="glass-panel p-6 rounded-3xl border border-belmont-border space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-3">
-                    <h2 className="text-xl font-bold font-display text-belmont-text-primary">
-                      {selectedAsset.name} ({selectedAsset.symbol})
-                    </h2>
-                    <Badge variant={selectedAsset.change_24h >= 0 ? 'success' : 'crimson'} size="sm">
-                      {selectedAsset.change_24h >= 0 ? `+${selectedAsset.change_24h}%` : `${selectedAsset.change_24h}%`}
-                    </Badge>
-                  </div>
-                  <p className="text-xs text-belmont-text-muted mt-1">{selectedAsset.description}</p>
-                </div>
-
-                <div className="text-right">
-                  <p className="text-[10px] text-belmont-text-muted font-bold uppercase tracking-wider">Cotação Atual</p>
-                  <p className="text-2xl font-extrabold text-amber-300 font-display">{selectedAsset.current_price} Coins</p>
-                </div>
+            {/* Asset Ticker Info Bar */}
+            <div className="glass-panel p-5 rounded-3xl border border-belmont-border flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold font-display text-belmont-text-primary">
+                  {selectedAsset.name} ({selectedAsset.symbol})
+                </h2>
+                <p className="text-xs text-belmont-text-muted">{selectedAsset.description}</p>
               </div>
 
-              {userHoldingForCurrentAsset && (
-                <div className="p-3 rounded-xl bg-belmont-surface/80 border border-belmont-border flex items-center justify-between text-xs">
-                  <span className="text-belmont-text-secondary">Sua posição neste ativo:</span>
-                  <span className="font-bold text-emerald-400">
-                    {userHoldingForCurrentAsset.quantity} unidades (Preço Médio: {userHoldingForCurrentAsset.average_price} Coins)
+              <div className="flex items-center gap-6 text-right text-xs">
+                <div>
+                  <p className="text-[10px] text-belmont-text-muted font-bold uppercase">Cotação Atual</p>
+                  <p className="text-lg font-extrabold text-amber-300 font-display">{selectedAsset.current_price} Coins</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-belmont-text-muted font-bold uppercase">Volume 24h</p>
+                  <p className="text-sm font-bold text-belmont-text-primary font-display">{selectedAsset.volume_24h || 0} Coins</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-belmont-text-muted font-bold uppercase">Variação 24h</p>
+                  <span className={`font-bold ${selectedAsset.change_24h >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {selectedAsset.change_24h >= 0 ? `+${selectedAsset.change_24h}%` : `${selectedAsset.change_24h}%`}
                   </span>
                 </div>
-              )}
+              </div>
             </div>
 
-            {/* Order Book Container */}
+            {/* Real Candlestick Chart Component */}
+            <CandleChart assetId={selectedAsset.id} currentPrice={selectedAsset.current_price} />
+
+            {/* Professional Order Book with Spread */}
             <div className="glass-panel rounded-3xl p-6 border border-belmont-border space-y-4">
               <div className="flex items-center justify-between pb-3 border-b border-belmont-border">
                 <h3 className="text-sm font-bold font-display text-belmont-text-primary uppercase tracking-wider flex items-center gap-2">
-                  <BarChart3 className="w-4 h-4 text-belmont-rose" />
-                  Book de Ordens — {selectedAsset.symbol}
+                  <Layers className="w-4 h-4 text-belmont-rose" />
+                  Livro de Ofertas com Spread (Profissional)
                 </h3>
 
-                <button
-                  onClick={loadMarketData}
-                  className="p-1.5 text-belmont-text-muted hover:text-white rounded-lg transition-colors"
-                >
+                <button onClick={loadMarketData} className="p-1.5 text-belmont-text-muted hover:text-white rounded-lg transition-colors">
                   <RefreshCw className="w-4 h-4" />
                 </button>
               </div>
@@ -244,7 +279,7 @@ export default function MarketPage() {
                 {/* Buy Orders (Bids) */}
                 <div className="space-y-2 bg-emerald-500/5 p-3 rounded-2xl border border-emerald-500/20">
                   <div className="flex items-center justify-between font-bold text-emerald-400 pb-2 border-b border-emerald-500/20">
-                    <span>Ofertas de Compra (Bids)</span>
+                    <span>Compras (Bids)</span>
                     <span>Preço / Qtd</span>
                   </div>
 
@@ -263,7 +298,7 @@ export default function MarketPage() {
                 {/* Sell Orders (Asks) */}
                 <div className="space-y-2 bg-red-500/5 p-3 rounded-2xl border border-red-500/20">
                   <div className="flex items-center justify-between font-bold text-red-400 pb-2 border-b border-red-500/20">
-                    <span>Ofertas de Venda (Asks)</span>
+                    <span>Vendas (Asks)</span>
                     <span>Preço / Qtd</span>
                   </div>
 
@@ -279,20 +314,27 @@ export default function MarketPage() {
                   )}
                 </div>
               </div>
+
+              {/* Spread Indicator Bar */}
+              <div className="p-3 rounded-2xl bg-belmont-surface/90 border border-belmont-border flex items-center justify-between text-xs font-semibold">
+                <span className="text-belmont-text-secondary">Melhor Bid: <strong className="text-emerald-400">{bestBid || '—'} Coins</strong></span>
+                <span className="text-amber-300 font-bold">Spread: {spread} Coins</span>
+                <span className="text-belmont-text-secondary">Melhor Ask: <strong className="text-red-400">{bestAsk || '—'} Coins</strong></span>
+              </div>
             </div>
 
-            {/* Recent Trades Activity Container */}
+            {/* Recent Trades Table */}
             <div className="glass-panel rounded-3xl p-6 border border-belmont-border space-y-4">
               <h3 className="text-sm font-bold font-display text-belmont-text-primary uppercase tracking-wider flex items-center gap-2">
                 <History className="w-4 h-4 text-amber-400" />
-                Atividade Recente de Negociações ({selectedAsset.symbol})
+                Últimos Negócios Executados ({selectedAsset.symbol})
               </h3>
 
               {trades.length === 0 ? (
                 <EmptyState
                   icon={<History className="w-5 h-5 text-amber-400" />}
-                  title="Mercado aguardando negociações."
-                  description="As execuções de ordens reais aparecerão aqui em tempo real."
+                  title="Aguardando negociações no mercado."
+                  description="Os trades reais executados pelo Engine aparecerão aqui."
                 />
               ) : (
                 <div className="space-y-2">
@@ -312,8 +354,9 @@ export default function MarketPage() {
             </div>
           </div>
 
-          {/* Right Column: Order Placement Form & Related News */}
+          {/* Right Column: Order Placement & User Orders */}
           <div className="space-y-6">
+            {/* Order Placement Form */}
             <div className="glass-panel rounded-3xl p-6 border border-belmont-border space-y-4">
               <h3 className="text-sm font-bold font-display text-belmont-text-primary uppercase tracking-wider">
                 Emitir Ordem de Negociação
@@ -354,38 +397,12 @@ export default function MarketPage() {
                 </button>
               </div>
 
-              {/* Type Selector: Market vs Limit */}
-              <div className="flex items-center gap-4 text-xs font-semibold">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="orderType"
-                    checked={orderType === 'market'}
-                    onChange={() => setOrderType('market')}
-                    className="accent-belmont-rose"
-                  />
-                  <span>Mercado</span>
-                </label>
-
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="orderType"
-                    checked={orderType === 'limit'}
-                    onChange={() => setOrderType('limit')}
-                    className="accent-belmont-rose"
-                  />
-                  <span>Limitada</span>
-                </label>
-              </div>
-
               <form onSubmit={handlePlaceOrder} className="space-y-4">
                 <Input
                   label="Preço por Unidade (Coins)"
                   type="number"
                   value={priceInput}
                   onChange={(e) => setPriceInput(e.target.value)}
-                  disabled={orderType === 'market'}
                   required
                 />
 
@@ -398,35 +415,62 @@ export default function MarketPage() {
                   required
                 />
 
-                <div className="pt-2">
-                  <Button
-                    type="submit"
-                    variant={orderSide === 'buy' ? 'success' : 'crimson'}
-                    size="md"
-                    fullWidth
-                    leftIcon={orderSide === 'buy' ? <ArrowDownLeft className="w-4 h-4" /> : <ArrowUpRight className="w-4 h-4" />}
-                  >
-                    Confirmar {orderSide === 'buy' ? 'Compra' : 'Venda'}
-                  </Button>
+                {/* Estimated Cost Summary */}
+                <div className="p-3 rounded-xl bg-belmont-surface/70 border border-belmont-border space-y-1 text-xs">
+                  <div className="flex justify-between text-belmont-text-secondary">
+                    <span>Custo Estimado:</span>
+                    <span className="font-bold text-amber-300">{calculatedCost} Coins</span>
+                  </div>
                 </div>
+
+                <Button
+                  type="submit"
+                  variant={orderSide === 'buy' ? 'success' : 'crimson'}
+                  size="md"
+                  fullWidth
+                  leftIcon={orderSide === 'buy' ? <ArrowDownLeft className="w-4 h-4" /> : <ArrowUpRight className="w-4 h-4" />}
+                >
+                  Confirmar {orderSide === 'buy' ? 'Compra' : 'Venda'}
+                </Button>
               </form>
             </div>
 
-            {/* Related News Container */}
+            {/* User Orders & Cancellation Panel */}
             <div className="glass-panel rounded-3xl p-6 border border-belmont-border space-y-4">
               <h3 className="text-sm font-bold font-display text-belmont-text-primary uppercase tracking-wider flex items-center gap-2">
-                <Newspaper className="w-4 h-4 text-belmont-rose" />
-                Notícias Relacionadas
+                <Layers className="w-4 h-4 text-belmont-rose" />
+                Minhas Ordens
               </h3>
 
-              {news.length === 0 ? (
-                <p className="text-xs text-belmont-text-muted">Sem notícias recentes para este ativo.</p>
+              {userOrders.length === 0 ? (
+                <p className="text-xs text-belmont-text-muted">Você não possui ordens registradas no momento.</p>
               ) : (
-                <div className="space-y-3">
-                  {news.map((item) => (
-                    <div key={item.id} className="p-3 rounded-2xl bg-belmont-surface/50 border border-belmont-border/70 space-y-1 text-xs">
-                      <p className="font-bold text-belmont-text-primary">{item.title}</p>
-                      <p className="text-[11px] text-belmont-text-muted line-clamp-2">{item.summary}</p>
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {userOrders.map((ord) => (
+                    <div key={ord.id} className="p-3 rounded-xl bg-belmont-surface/50 border border-belmont-border space-y-2 text-xs">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Badge variant={ord.side === 'buy' ? 'success' : 'crimson'} size="sm">
+                            {ord.side.toUpperCase()}
+                          </Badge>
+                          <span className="font-bold text-belmont-text-primary">{ord.asset?.symbol}</span>
+                        </div>
+                        <Badge variant={ord.status === 'pending' ? 'gold' : 'outline'} size="sm">
+                          {ord.status.toUpperCase()}
+                        </Badge>
+                      </div>
+
+                      <div className="flex items-center justify-between text-belmont-text-muted">
+                        <span>{ord.filled_quantity}/{ord.quantity} un @ {ord.price} Coins</span>
+                        {ord.status === 'pending' && (
+                          <button
+                            onClick={() => handleCancelOrder(ord.id)}
+                            className="text-red-400 hover:underline text-[10px] font-bold flex items-center gap-1"
+                          >
+                            <XCircle className="w-3 h-3" /> Cancelar
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
