@@ -54,6 +54,81 @@ export type Database = {
         }
         Relationships: []
       }
+      economic_events: {
+        Row: {
+          id: string
+          title: string
+          description: string
+          type: string
+          target_asset_id: string | null
+          impact_score: number
+          is_active: boolean
+          starts_at: string
+          ends_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          title: string
+          description: string
+          type: string
+          target_asset_id?: string | null
+          impact_score?: number
+          is_active?: boolean
+          starts_at?: string
+          ends_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          title?: string
+          description?: string
+          type?: string
+          target_asset_id?: string | null
+          impact_score?: number
+          is_active?: boolean
+          starts_at?: string
+          ends_at?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      news_articles: {
+        Row: {
+          id: string
+          title: string
+          summary: string
+          content: string
+          event_id: string | null
+          related_asset_id: string | null
+          author_id: string | null
+          is_published: boolean
+          published_at: string
+        }
+        Insert: {
+          id?: string
+          title: string
+          summary: string
+          content: string
+          event_id?: string | null
+          related_asset_id?: string | null
+          author_id?: string | null
+          is_published?: boolean
+          published_at?: string
+        }
+        Update: {
+          id?: string
+          title?: string
+          summary?: string
+          content?: string
+          event_id?: string | null
+          related_asset_id?: string | null
+          author_id?: string | null
+          is_published?: boolean
+          published_at?: string
+        }
+        Relationships: []
+      }
       bank_accounts: {
         Row: {
           user_id: string

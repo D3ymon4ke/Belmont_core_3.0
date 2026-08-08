@@ -3,266 +3,312 @@
 import React, { useState, useEffect } from 'react'
 import {
   ShieldAlert,
-  Megaphone,
-  Users,
-  MessageSquare,
-  Compass,
-  Plus,
   Coins,
-  CheckCircle2,
   Award,
+  Megaphone,
+  UserCheck,
+  Search,
+  CheckCircle2,
   AlertTriangle,
+  Newspaper,
+  TrendingUp,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { Textarea } from '@/components/ui/Textarea'
-import { adminAdjustCoinsService, unlockAchievementService } from '@/lib/services/economy'
-import { getAllProfilesService } from '@/lib/services/data'
-import { Profile } from '@/types'
+import { Skeleton } from '@/components/ui/Skeleton'
+import { Modal } from '@/components/ui/Modal'
+import { Avatar } from '@/components/ui/Avatar'
+import { getAllProfilesService, createAnnouncementService } from '@/lib/services/data'
+import { adjustUserCoinsAdminService, grantUserAchievementAdminService } from '@/lib/services/economy'
+import { createEconomicEventAdminService, createNewsArticleAdminService } from '@/lib/services/news'
+import { getAssetsService } from '@/lib/services/market'
+import { Profile, Asset } from '@/types'
 
 export default function AdminPage() {
   const [profiles, setProfiles] = useState<Profile[]>([])
+  const [assets, setAssets] = useState<Asset[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [searchMemberQuery, setSearchMemberQuery] = useState('')
+
+  // Selected Member for Coin / Achievement Adjustment
+  const [selectedMember, setSelectedMember] = useState<Profile | null>(null)
+  const [coinAmount, setCoinAmount] = useState<string>('')
+  const [coinDescription, setCoinDescription] = useState<string>('')
+  const [achievementId, setAchievementId] = useState<string>('founder')
+
+  // Announcement State
   const [announcementTitle, setAnnouncementTitle] = useState('')
   const [announcementBody, setAnnouncementBody] = useState('')
 
-  // Coin Adjustment Form State
-  const [selectedUserForCoins, setSelectedUserForCoins] = useState('')
-  const [coinAmount, setCoinAmount] = useState<number>(100)
-  const [coinReason, setCoinReason] = useState('')
+  // Economic Event State
+  const [eventTitle, setEventTitle] = useState('')
+  const [eventDesc, setEventDesc] = useState('')
+  const [eventType, setEventType] = useState<'positive' | 'negative' | 'neutral' | 'rumor'>('positive')
+  const [eventTargetAsset, setEventTargetAsset] = useState<string>('')
+  const [eventImpact, setEventImpact] = useState<string>('0.30')
 
-  // Achievement Grant Form State
-  const [selectedUserForAch, setSelectedUserForAch] = useState('')
-  const [selectedAchId, setSelectedAchId] = useState('founder')
+  // News State
+  const [newsTitle, setNewsTitle] = useState('')
+  const [newsSummary, setNewsSummary] = useState('')
+  const [newsContent, setNewsContent] = useState('')
+  const [newsTargetAsset, setNewsTargetAsset] = useState<string>('')
 
-  const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
-  useEffect(() => {
-    async function loadMembers() {
-      const data = await getAllProfilesService()
-      setProfiles(data)
-      if (data.length > 0) {
-        setSelectedUserForCoins(data[0].id)
-        setSelectedUserForAch(data[0].id)
-      }
-    }
-    loadMembers()
-  }, [])
+  const loadData = async () => {
+    setIsLoading(true)
+    const membersData = await getAllProfilesService()
+    setProfiles(membersData)
 
-  const handleCreateAnnouncement = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!announcementTitle.trim() || !announcementBody.trim()) return
-
-    setFeedbackMsg({ type: 'success', text: 'Comunicado transmitido com sucesso a todos os membros!' })
-    setAnnouncementTitle('')
-    setAnnouncementBody('')
-    setTimeout(() => setFeedbackMsg(null), 4000)
+    const activeAssets = await getAssetsService()
+    setAssets(activeAssets)
+    setIsLoading(false)
   }
 
-  const handleAdjustCoins = async (e: React.FormEvent) => {
+  useEffect(() => {
+    loadData()
+  }, [])
+
+  const handleCoinAdjust = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!coinReason.trim() || !selectedUserForCoins) {
-      setFeedbackMsg({ type: 'error', text: 'Selecione um membro e insira a justificativa para o ajuste.' })
+    if (!selectedMember) return
+    const amount = parseInt(coinAmount)
+    if (isNaN(amount) || amount === 0) {
+      setFeedback({ type: 'error', message: 'Informe uma quantidade válida.' })
       return
     }
 
-    const success = await adminAdjustCoinsService(selectedUserForCoins, coinAmount, coinReason.trim())
-    if (success) {
-      setFeedbackMsg({ type: 'success', text: `Ajuste administrativo de ${coinAmount} Coins realizado!` })
-      setCoinReason('')
+    const res = await adjustUserCoinsAdminService(selectedMember.id, amount, coinDescription || 'Ajuste Administrativo')
+    if (res.success) {
+      setFeedback({ type: 'success', message: `Saldo de ${selectedMember.display_name} ajustado com sucesso!` })
+      setCoinAmount('')
+      setCoinDescription('')
+      await loadData()
     } else {
-      setFeedbackMsg({ type: 'error', text: 'Não foi possível registrar a transação econômica no Supabase.' })
+      setFeedback({ type: 'error', message: res.error || 'Falha ao ajustar moedas.' })
     }
-    setTimeout(() => setFeedbackMsg(null), 4000)
+    setTimeout(() => setFeedback(null), 4000)
   }
 
   const handleGrantAchievement = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!selectedUserForAch) return
-    await unlockAchievementService(selectedUserForAch, selectedAchId)
-    setFeedbackMsg({ type: 'success', text: 'Conquista concedida com sucesso ao membro!' })
-    setTimeout(() => setFeedbackMsg(null), 4000)
+    if (!selectedMember) return
+
+    const res = await grantUserAchievementAdminService(selectedMember.id, achievementId)
+    if (res.success) {
+      setFeedback({ type: 'success', message: `Conquista concedida para ${selectedMember.display_name}!` })
+      await loadData()
+    } else {
+      setFeedback({ type: 'error', message: res.error || 'Falha ao conceder conquista.' })
+    }
+    setTimeout(() => setFeedback(null), 4000)
   }
 
-  const metrics = [
-    { title: 'Membros Cadastrados', value: profiles.length.toString(), icon: Users, color: 'text-rose-400' },
-    { title: 'Publicações do Feed', value: '1', icon: Compass, color: 'text-amber-400' },
-    { title: 'Mensagens no Chat', value: '1', icon: MessageSquare, color: 'text-emerald-400' },
-    { title: 'Comunicados', value: '1', icon: Megaphone, color: 'text-sky-400' },
-  ]
+  const handleCreateAnnouncement = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!announcementTitle.trim() || !announcementBody.trim()) return
+
+    const res = await createAnnouncementService(announcementTitle.trim(), announcementBody.trim())
+    if (res.success) {
+      setFeedback({ type: 'success', message: 'Comunicado oficial publicado na Mansão!' })
+      setAnnouncementTitle('')
+      setAnnouncementBody('')
+    } else {
+      setFeedback({ type: 'error', message: res.error || 'Falha ao publicar comunicado.' })
+    }
+    setTimeout(() => setFeedback(null), 4000)
+  }
+
+  const handleCreateEvent = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!eventTitle.trim() || !eventDesc.trim()) return
+
+    const impact = parseFloat(eventImpact)
+    const res = await createEconomicEventAdminService(
+      eventTitle.trim(),
+      eventDesc.trim(),
+      eventType,
+      eventTargetAsset || null,
+      isNaN(impact) ? 0.3 : impact
+    )
+
+    if (res.success) {
+      setFeedback({ type: 'success', message: 'Evento Econômico ativado no mercado!' })
+      setEventTitle('')
+      setEventDesc('')
+    } else {
+      setFeedback({ type: 'error', message: res.error || 'Falha ao criar evento.' })
+    }
+    setTimeout(() => setFeedback(null), 4000)
+  }
+
+  const handleCreateNews = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newsTitle.trim() || !newsSummary.trim() || !newsContent.trim()) return
+
+    const res = await createNewsArticleAdminService(
+      newsTitle.trim(),
+      newsSummary.trim(),
+      newsContent.trim(),
+      null,
+      newsTargetAsset || null
+    )
+
+    if (res.success) {
+      setFeedback({ type: 'success', message: 'Notícia oficial publicada no ecossistema!' })
+      setNewsTitle('')
+      setNewsSummary('')
+      setNewsContent('')
+    } else {
+      setFeedback({ type: 'error', message: res.error || 'Falha ao publicar notícia.' })
+    }
+    setTimeout(() => setFeedback(null), 4000)
+  }
+
+  const filteredProfiles = profiles.filter((p) =>
+    p.display_name.toLowerCase().includes(searchMemberQuery.toLowerCase()) ||
+    p.username.toLowerCase().includes(searchMemberQuery.toLowerCase())
+  )
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6 animate-fadeIn pb-12">
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold font-display tracking-tight text-belmont-text-primary flex items-center gap-2.5">
-              <ShieldAlert className="w-6 h-6 text-amber-400" />
-              Painel Administrativo da Mansão
-            </h1>
-            <Badge variant="gold">ACESSO PROTEGIDO</Badge>
+    <div className="max-w-5xl mx-auto space-y-6 animate-fadeIn pb-12">
+      {/* Header Banner */}
+      <div className="glass-card rounded-3xl p-6 sm:p-8 border border-amber-500/30 relative overflow-hidden bg-mansion-radial">
+        <div className="absolute top-0 right-0 w-80 h-80 bg-amber-500/15 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="relative z-10 flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+            <ShieldAlert className="w-6 h-6" />
           </div>
-          <p className="text-xs text-belmont-text-muted mt-1">
-            Gestão econômica de Belmont Coins, atribuição de conquistas e transmissão de comunicados
-          </p>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-extrabold font-display tracking-tight text-belmont-text-primary">
+              Painel de Administração
+            </h1>
+            <p className="text-xs sm:text-sm text-belmont-text-secondary">
+              Gerencie moedas, conquistas, comunicados, eventos econômicos e notícias oficiais do Belmont Core.
+            </p>
+          </div>
         </div>
       </div>
 
-      {feedbackMsg && (
+      {/* Feedback Alert */}
+      {feedback && (
         <div
-          className={`p-3.5 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
-            feedbackMsg.type === 'success'
+          className={`p-4 rounded-2xl border text-xs font-semibold flex items-center gap-2.5 ${
+            feedback.type === 'success'
               ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
               : 'bg-red-500/10 border-red-500/20 text-red-400'
           }`}
         >
-          {feedbackMsg.type === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
-          <span>{feedbackMsg.text}</span>
+          {feedback.type === 'success' ? <CheckCircle2 className="w-4.5 h-4.5" /> : <AlertTriangle className="w-4.5 h-4.5" />}
+          <span>{feedback.message}</span>
         </div>
       )}
 
-      {/* Metrics Row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {metrics.map((m, i) => {
-          const Icon = m.icon
-          return (
-            <div key={i} className="glass-panel p-4 rounded-2xl border border-belmont-border space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] uppercase font-semibold text-belmont-text-muted">{m.title}</span>
-                <Icon className={`w-4 h-4 ${m.color}`} />
+      {/* Admin Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Section 1: Economic Events */}
+        <div className="glass-panel rounded-3xl p-6 border border-belmont-border space-y-4">
+          <h3 className="text-base font-bold font-display text-belmont-text-primary flex items-center gap-2">
+            <TrendingUp className="w-5 h-5 text-amber-400" />
+            Disparar Evento Econômico
+          </h3>
+
+          <form onSubmit={handleCreateEvent} className="space-y-4">
+            <Input
+              label="Título do Evento"
+              placeholder="Ex: Expansão da Infraestrutura"
+              value={eventTitle}
+              onChange={(e) => setEventTitle(e.target.value)}
+              required
+            />
+
+            <Input
+              label="Descrição do Evento"
+              placeholder="Ex: Aporte financeiro confirmado no setor de servidores."
+              value={eventDesc}
+              onChange={(e) => setEventDesc(e.target.value)}
+              required
+            />
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-belmont-text-secondary mb-1">Tipo de Evento</label>
+                <select
+                  value={eventType}
+                  onChange={(e: any) => setEventType(e.target.value)}
+                  className="w-full bg-belmont-bg text-xs text-belmont-text-primary p-2.5 rounded-xl border border-belmont-border"
+                >
+                  <option value="positive">Otimista (+)</option>
+                  <option value="negative">Pessimista (-)</option>
+                  <option value="neutral">Neutro (=)</option>
+                  <option value="rumor">Rumor (!)</option>
+                </select>
               </div>
-              <p className="text-xl font-bold font-display text-belmont-text-primary">{m.value}</p>
+
+              <div>
+                <label className="block text-xs font-semibold text-belmont-text-secondary mb-1">Ativo Alvo</label>
+                <select
+                  value={eventTargetAsset}
+                  onChange={(e) => setEventTargetAsset(e.target.value)}
+                  className="w-full bg-belmont-bg text-xs text-belmont-text-primary p-2.5 rounded-xl border border-belmont-border"
+                >
+                  <option value="">Geral (Todos os Ativos)</option>
+                  {assets.map((a) => (
+                    <option key={a.id} value={a.id}>{a.symbol} - {a.name}</option>
+                  ))}
+                </select>
+              </div>
             </div>
-          )
-        })}
-      </div>
 
-      {/* Admin Coin Adjustment Card */}
-      <div className="glass-panel rounded-3xl p-6 border border-belmont-border space-y-4">
-        <h3 className="text-sm font-bold font-display text-belmont-text-primary uppercase tracking-wider flex items-center gap-2">
-          <Coins className="w-4 h-4 text-amber-400" />
-          Ajuste Administrativo de Saldo (Belmont Coins)
-        </h3>
+            <Button type="submit" variant="gold" size="md" fullWidth>
+              Ativar Evento no Mercado
+            </Button>
+          </form>
+        </div>
 
-        <form onSubmit={handleAdjustCoins} className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-xs font-semibold text-belmont-text-secondary mb-1">Membro Destino</label>
-            <select
-              value={selectedUserForCoins}
-              onChange={(e) => setSelectedUserForCoins(e.target.value)}
-              className="w-full bg-belmont-surface/80 text-xs text-belmont-text-primary rounded-xl p-2.5 border border-belmont-border focus:outline-none"
-            >
-              {profiles.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.display_name} (@{p.username})
-                </option>
-              ))}
-            </select>
-          </div>
+        {/* Section 2: News Articles */}
+        <div className="glass-panel rounded-3xl p-6 border border-belmont-border space-y-4">
+          <h3 className="text-base font-bold font-display text-belmont-text-primary flex items-center gap-2">
+            <Newspaper className="w-5 h-5 text-belmont-rose" />
+            Publicar Notícia Oficial
+          </h3>
 
-          <div>
+          <form onSubmit={handleCreateNews} className="space-y-4">
             <Input
-              label="Quantidade (ex: +500 ou -200)"
-              type="number"
-              value={coinAmount}
-              onChange={(e) => setCoinAmount(parseInt(e.target.value) || 0)}
+              label="Título da Notícia"
+              placeholder="Ex: Anúncio de Expansão da Castle Holding"
+              value={newsTitle}
+              onChange={(e) => setNewsTitle(e.target.value)}
               required
             />
-          </div>
 
-          <div>
             <Input
-              label="Motivo Obrigatório"
-              placeholder="Ex: Recompensa por projeto"
-              value={coinReason}
-              onChange={(e) => setCoinReason(e.target.value)}
+              label="Resumo Curto"
+              placeholder="Ex: Nova unidade de servidores confirmada para a Mansão."
+              value={newsSummary}
+              onChange={(e) => setNewsSummary(e.target.value)}
               required
             />
-          </div>
 
-          <div className="sm:col-span-3 flex justify-end">
-            <Button type="submit" variant="gold" size="sm" leftIcon={<Coins className="w-4 h-4" />}>
-              Registrar Ajuste Econômico
+            <div>
+              <label className="block text-xs font-semibold text-belmont-text-secondary mb-1">Conteúdo da Notícia</label>
+              <textarea
+                placeholder="Insira o texto completo da matéria..."
+                value={newsContent}
+                onChange={(e) => setNewsContent(e.target.value)}
+                rows={3}
+                className="w-full bg-belmont-bg text-xs text-belmont-text-primary p-3 rounded-xl border border-belmont-border focus:border-belmont-rose focus:outline-none"
+                required
+              />
+            </div>
+
+            <Button type="submit" variant="primary" size="md" fullWidth>
+              Publicar Notícia na Mansão
             </Button>
-          </div>
-        </form>
-      </div>
-
-      {/* Grant Manual Achievement Card */}
-      <div className="glass-panel rounded-3xl p-6 border border-belmont-border space-y-4">
-        <h3 className="text-sm font-bold font-display text-belmont-text-primary uppercase tracking-wider flex items-center gap-2">
-          <Award className="w-4 h-4 text-belmont-rose" />
-          Conceder Conquista Especial
-        </h3>
-
-        <form onSubmit={handleGrantAchievement} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-semibold text-belmont-text-secondary mb-1">Membro</label>
-            <select
-              value={selectedUserForAch}
-              onChange={(e) => setSelectedUserForAch(e.target.value)}
-              className="w-full bg-belmont-surface/80 text-xs text-belmont-text-primary rounded-xl p-2.5 border border-belmont-border focus:outline-none"
-            >
-              {profiles.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.display_name} (@{p.username})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-belmont-text-secondary mb-1">Conquista</label>
-            <select
-              value={selectedAchId}
-              onChange={(e) => setSelectedAchId(e.target.value)}
-              className="w-full bg-belmont-surface/80 text-xs text-belmont-text-primary rounded-xl p-2.5 border border-belmont-border focus:outline-none"
-            >
-              <option value="founder">Fundador da Mansão (Lendária)</option>
-              <option value="chroncler">Cronista (Rara)</option>
-              <option value="first_post">Primeiro Passo (Comum)</option>
-            </select>
-          </div>
-
-          <div className="sm:col-span-2 flex justify-end">
-            <Button type="submit" variant="primary" size="sm" leftIcon={<Award className="w-4 h-4" />}>
-              Atribuir Conquista
-            </Button>
-          </div>
-        </form>
-      </div>
-
-      {/* Broadcast Announcement Form */}
-      <div className="glass-panel rounded-3xl p-6 border border-belmont-border space-y-4">
-        <h3 className="text-sm font-bold font-display text-belmont-text-primary uppercase tracking-wider flex items-center gap-2">
-          <Megaphone className="w-4 h-4 text-sky-400" />
-          Transmitir Novo Comunicado Oficial
-        </h3>
-
-        <form onSubmit={handleCreateAnnouncement} className="space-y-4">
-          <Input
-            label="Título do Comunicado"
-            placeholder="Ex: Atualização da Mansão Belmont"
-            value={announcementTitle}
-            onChange={(e) => setAnnouncementTitle(e.target.value)}
-            required
-          />
-
-          <Textarea
-            label="Conteúdo da Mensagem"
-            placeholder="Texto detalhado do comunicado..."
-            value={announcementBody}
-            onChange={(e) => setAnnouncementBody(e.target.value)}
-            rows={3}
-            required
-          />
-
-          <div className="flex justify-end">
-            <Button type="submit" variant="secondary" size="sm" leftIcon={<Plus className="w-4 h-4" />}>
-              Transmitir Comunicado
-            </Button>
-          </div>
-        </form>
+          </form>
+        </div>
       </div>
     </div>
   )

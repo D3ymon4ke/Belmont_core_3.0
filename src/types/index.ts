@@ -24,6 +24,15 @@ export type Holding = Database['public']['Tables']['holdings']['Row'] & {
   asset?: Asset
 }
 
+export type EconomicEvent = Database['public']['Tables']['economic_events']['Row'] & {
+  target_asset?: Asset
+}
+export type NewsArticle = Database['public']['Tables']['news_articles']['Row'] & {
+  event?: EconomicEvent
+  related_asset?: Asset
+  author?: Profile
+}
+
 export type Post = Database['public']['Tables']['posts']['Row'] & {
   author?: Profile
   likes?: Database['public']['Tables']['post_likes']['Row'][]

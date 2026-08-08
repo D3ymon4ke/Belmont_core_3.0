@@ -31,6 +31,10 @@ export async function getPostsService(): Promise<Post[]> {
   }
 }
 
+export async function getRecentPostsService(): Promise<Post[]> {
+  return getPostsService()
+}
+
 /**
  * Create a Real Post in Supabase
  */
@@ -292,6 +296,32 @@ export async function getAnnouncementsService(): Promise<Announcement[]> {
     return data as Announcement[]
   } catch (e) {
     return []
+  }
+}
+
+/**
+ * Create Announcement
+ */
+export async function createAnnouncementService(
+  title: string,
+  body: string
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = createClient()
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return { success: false, error: 'Sessão não autenticada.' }
+
+    const { error } = await (supabase.from('announcements') as any).insert({
+      title,
+      body,
+      author_id: user.id,
+      is_active: true,
+    })
+
+    if (error) return { success: false, error: error.message }
+    return { success: true }
+  } catch (e: any) {
+    return { success: false, error: e.message || 'Erro ao publicar comunicado.' }
   }
 }
 

@@ -19,6 +19,7 @@ import {
   Wallet,
   Landmark,
   BarChart3,
+  Newspaper,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { Avatar } from '@/components/ui/Avatar'
@@ -49,6 +50,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentProfile }) => {
         { label: 'Command Center', href: '/home', icon: Home },
         { label: 'Banco Belmont', href: '/banco', icon: Landmark },
         { label: 'Bolsa Belmont', href: '/bolsa', icon: BarChart3 },
+        { label: 'Notícias da Mansão', href: '/noticias', icon: Newspaper },
         { label: 'Boas-Vindas & Lore', href: '/boas-vindas', icon: Sparkles },
       ],
     },

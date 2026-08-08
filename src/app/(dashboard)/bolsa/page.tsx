@@ -13,6 +13,8 @@ import {
   CheckCircle2,
   AlertTriangle,
   RefreshCw,
+  Newspaper,
+  Calendar,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -27,8 +29,9 @@ import {
   getTradeHistoryService,
   createOrderService,
 } from '@/lib/services/market'
+import { getNewsArticlesService } from '@/lib/services/news'
 import { createClient } from '@/lib/supabase/client'
-import { Asset, Order, Holding, Trade } from '@/types'
+import { Asset, Order, Holding, Trade, NewsArticle } from '@/types'
 
 export default function MarketPage() {
   const supabase = createClient()
@@ -38,6 +41,7 @@ export default function MarketPage() {
   const [holdings, setHoldings] = useState<Holding[]>([])
   const [userOrders, setUserOrders] = useState<Order[]>([])
   const [trades, setTrades] = useState<Trade[]>([])
+  const [news, setNews] = useState<NewsArticle[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
   // Order Form State
@@ -62,6 +66,9 @@ export default function MarketPage() {
 
       const tradeHist = await getTradeHistoryService(current.id)
       setTrades(tradeHist)
+
+      const relatedNews = await getNewsArticlesService(current.id)
+      setNews(relatedNews)
     }
 
     const { data: { user } } = await supabase.auth.getUser()
@@ -85,6 +92,7 @@ export default function MarketPage() {
       setPriceInput(selectedAsset.current_price.toString())
       getOrderBookService(selectedAsset.id).then(setOrderBook)
       getTradeHistoryService(selectedAsset.id).then(setTrades)
+      getNewsArticlesService(selectedAsset.id).then(setNews)
     }
   }, [selectedAsset])
 
@@ -129,13 +137,13 @@ export default function MarketPage() {
           <div className="space-y-2">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-xs font-semibold text-amber-300">
               <BarChart3 className="w-3.5 h-3.5" />
-              <span>Mercado Fictício da Mansão Belmont • Terminal Ativo</span>
+              <span>Mercado Vivo da Mansão Belmont • Terminal Ativo 24/7</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold font-display tracking-tight text-belmont-text-primary">
               Bolsa Belmont
             </h1>
             <p className="text-xs sm:text-sm text-belmont-text-secondary">
-              Negocie ativos fictícios com Belmont Coins, acompanhe a liquidez do book e gerencie seu portfólio.
+              Negocie ativos fictícios com Belmont Coins, acompanhe a liquidez do book e a atividade do mercado.
             </p>
           </div>
 
@@ -180,10 +188,10 @@ export default function MarketPage() {
         })}
       </div>
 
-      {/* Main Terminal Grid: Order Book & Order Form */}
+      {/* Main Terminal Grid */}
       {selectedAsset && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left 2 Columns: Selected Asset Header & Order Book */}
+          {/* Left 2 Columns: Selected Asset Header & Order Book & Recent Trades */}
           <div className="lg:col-span-2 space-y-6">
             {/* Active Asset Info Card */}
             <div className="glass-panel p-6 rounded-3xl border border-belmont-border space-y-3">
@@ -206,7 +214,6 @@ export default function MarketPage() {
                 </div>
               </div>
 
-              {/* Holding summary for this asset */}
               {userHoldingForCurrentAsset && (
                 <div className="p-3 rounded-xl bg-belmont-surface/80 border border-belmont-border flex items-center justify-between text-xs">
                   <span className="text-belmont-text-secondary">Sua posição neste ativo:</span>
@@ -273,9 +280,39 @@ export default function MarketPage() {
                 </div>
               </div>
             </div>
+
+            {/* Recent Trades Activity Container */}
+            <div className="glass-panel rounded-3xl p-6 border border-belmont-border space-y-4">
+              <h3 className="text-sm font-bold font-display text-belmont-text-primary uppercase tracking-wider flex items-center gap-2">
+                <History className="w-4 h-4 text-amber-400" />
+                Atividade Recente de Negociações ({selectedAsset.symbol})
+              </h3>
+
+              {trades.length === 0 ? (
+                <EmptyState
+                  icon={<History className="w-5 h-5 text-amber-400" />}
+                  title="Mercado aguardando negociações."
+                  description="As execuções de ordens reais aparecerão aqui em tempo real."
+                />
+              ) : (
+                <div className="space-y-2">
+                  {trades.map((tr) => (
+                    <div key={tr.id} className="p-3 rounded-xl bg-belmont-surface/40 border border-belmont-border/60 flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-3">
+                        <Badge variant="gold" size="sm">TRADE</Badge>
+                        <span className="text-belmont-text-primary font-bold">{tr.quantity} un @ {tr.price} Coins</span>
+                      </div>
+                      <span className="text-[10px] text-belmont-text-muted">
+                        {new Date(tr.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Right Column: Order Placement Form */}
+          {/* Right Column: Order Placement Form & Related News */}
           <div className="space-y-6">
             <div className="glass-panel rounded-3xl p-6 border border-belmont-border space-y-4">
               <h3 className="text-sm font-bold font-display text-belmont-text-primary uppercase tracking-wider">
@@ -373,6 +410,27 @@ export default function MarketPage() {
                   </Button>
                 </div>
               </form>
+            </div>
+
+            {/* Related News Container */}
+            <div className="glass-panel rounded-3xl p-6 border border-belmont-border space-y-4">
+              <h3 className="text-sm font-bold font-display text-belmont-text-primary uppercase tracking-wider flex items-center gap-2">
+                <Newspaper className="w-4 h-4 text-belmont-rose" />
+                Notícias Relacionadas
+              </h3>
+
+              {news.length === 0 ? (
+                <p className="text-xs text-belmont-text-muted">Sem notícias recentes para este ativo.</p>
+              ) : (
+                <div className="space-y-3">
+                  {news.map((item) => (
+                    <div key={item.id} className="p-3 rounded-2xl bg-belmont-surface/50 border border-belmont-border/70 space-y-1 text-xs">
+                      <p className="font-bold text-belmont-text-primary">{item.title}</p>
+                      <p className="text-[11px] text-belmont-text-muted line-clamp-2">{item.summary}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

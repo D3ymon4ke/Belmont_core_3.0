@@ -143,6 +143,15 @@ export async function adminAdjustCoinsService(
   }
 }
 
+export async function adjustUserCoinsAdminService(
+  targetUserId: string,
+  amount: number,
+  description: string
+): Promise<{ success: boolean; error?: string }> {
+  const ok = await adminAdjustCoinsService(targetUserId, amount, description)
+  return ok ? { success: true } : { success: false, error: 'Falha ao ajustar moedas.' }
+}
+
 /**
  * Unlock Achievement RPC call
  */
@@ -161,4 +170,12 @@ export async function unlockAchievementService(
   } catch (e) {
     return false
   }
+}
+
+export async function grantUserAchievementAdminService(
+  userId: string,
+  achievementId: string
+): Promise<{ success: boolean; error?: string }> {
+  const ok = await unlockAchievementService(userId, achievementId)
+  return ok ? { success: true } : { success: false, error: 'Falha ao conceder conquista.' }
 }

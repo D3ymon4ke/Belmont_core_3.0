@@ -11,46 +11,60 @@ async function runMarketCycle() {
   try {
     await client.connect();
 
-    // 1. Fetch active assets and NPCs
+    // 1. Fetch active assets, NPCs and active economic events
     const assetsRes = await client.query('SELECT * FROM public.assets WHERE is_active = TRUE;');
     const agentsRes = await client.query('SELECT * FROM public.market_agents WHERE is_active = TRUE;');
+    const eventsRes = await client.query('SELECT * FROM public.economic_events WHERE is_active = TRUE;');
 
     const assets = assetsRes.rows;
     const agents = agentsRes.rows;
+    const activeEvents = eventsRes.rows;
 
     if (assets.length === 0 || agents.length === 0) {
       return;
     }
 
     const timestamp = new Date().toISOString();
-    console.log(`\n[MARKET] === Cycle Started at ${timestamp} ===`);
+    console.log(`\n[MARKET ENGINE] === Cycle Started at ${timestamp} ===`);
+    console.log(`[EVENTS] ${activeEvents.length} active economic event(s) in progress.`);
 
-    // 2. NPCs Strategy Order Placement
+    // 2. Process each asset considering active economic sentiment
     for (const asset of assets) {
       const currentPrice = asset.current_price;
+
+      // Find events targeting this specific asset
+      const assetEvents = activeEvents.filter(e => e.target_asset_id === asset.id);
+      const sentimentScore = assetEvents.reduce((acc, curr) => acc + parseFloat(curr.impact_score || 0), 0);
+
       const agent = agents[Math.floor(Math.random() * agents.length)];
 
       let side = Math.random() > 0.5 ? 'buy' : 'sell';
       let priceOffset = 0;
+      let qtyMultiplier = 1;
 
-      // Apply NPC Personality Logic
+      // Sentiment influence
+      if (sentimentScore > 0) {
+        // Bullish bias
+        side = Math.random() > 0.3 ? 'buy' : 'sell';
+        priceOffset = Math.floor(sentimentScore * 3);
+        if (agent.personality === 'speculator') qtyMultiplier = 2;
+      } else if (sentimentScore < 0) {
+        // Bearish bias
+        side = Math.random() > 0.3 ? 'sell' : 'buy';
+        priceOffset = -Math.floor(Math.abs(sentimentScore) * 3);
+      }
+
+      // Personality specific overrides
       if (agent.personality === 'accumulator') {
-        side = 'buy';
-        priceOffset = -Math.floor(Math.random() * 3);
-      } else if (agent.personality === 'realizer') {
-        side = 'sell';
-        priceOffset = Math.floor(Math.random() * 3);
+        if (sentimentScore >= 0) side = 'buy';
       } else if (agent.personality === 'trader') {
-        side = Math.random() > 0.4 ? 'buy' : 'sell';
-        priceOffset = side === 'buy' ? -1 : 1;
-      } else if (agent.personality === 'speculator') {
-        priceOffset = (Math.random() > 0.5 ? 1 : -1) * (Math.floor(Math.random() * 5) + 1);
+        priceOffset += (side === 'buy' ? -1 : 1);
       } else if (agent.personality === 'conservative') {
-        priceOffset = side === 'buy' ? -Math.floor(Math.random() * 4) - 1 : Math.floor(Math.random() * 4) + 1;
+        priceOffset += (side === 'buy' ? -2 : 2);
       }
 
       const orderPrice = Math.max(1, currentPrice + priceOffset);
-      const orderQty = Math.floor(Math.random() * 15) + 1;
+      const orderQty = (Math.floor(Math.random() * 10) + 1) * qtyMultiplier;
 
       // Insert real order into book
       await client.query(
@@ -59,18 +73,18 @@ async function runMarketCycle() {
         [agent.id, asset.id, side, orderPrice, orderQty]
       );
 
-      console.log(`[NPC] ${agent.name} submitted ${side.toUpperCase()} ${orderQty}x ${asset.symbol} @ ${orderPrice} Coins`);
+      console.log(`[NPC] ${agent.name} (${agent.personality}) -> ${side.toUpperCase()} ${orderQty}x ${asset.symbol} @ ${orderPrice} Coins (Sentiment: ${sentimentScore.toFixed(2)})`);
 
       // 3. Trigger PostgreSQL Matching Engine
       const matchRes = await client.query('SELECT public.match_orders_for_asset($1);', [asset.id]);
       const matches = matchRes.rows[0]?.match_orders_for_asset || 0;
 
       if (matches > 0) {
-        console.log(`[TRADE] ${matches} trade(s) executed for ${asset.symbol}`);
+        console.log(`[TRADE] ${matches} match trade(s) executed for ${asset.symbol}`);
       }
     }
 
-    console.log(`[MARKET] === Cycle Completed Successfully ===`);
+    console.log(`[MARKET ENGINE] === Cycle Completed Successfully ===`);
   } catch (err) {
     console.error('[MARKET ENGINE ERROR]:', err);
   } finally {

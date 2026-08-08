@@ -328,6 +328,41 @@ CREATE TABLE IF NOT EXISTS public.holdings (
 CREATE INDEX IF NOT EXISTS idx_holdings_user ON public.holdings(user_id);
 
 -- ===================================================
+-- FASE 6: EVENTOS ECONÔMICOS & NOTÍCIAS OFICIAIS
+-- ===================================================
+
+-- 23. ECONOMIC EVENTS TABLE
+CREATE TABLE IF NOT EXISTS public.economic_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  type TEXT NOT NULL, -- 'positive', 'negative', 'neutral', 'rumor'
+  target_asset_id UUID REFERENCES public.assets(id) ON DELETE SET NULL,
+  impact_score NUMERIC(4,2) DEFAULT 0.00,
+  is_active BOOLEAN DEFAULT TRUE,
+  starts_at TIMESTAMPTZ DEFAULT NOW(),
+  ends_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_economic_events_active ON public.economic_events(is_active, target_asset_id);
+
+-- 24. NEWS ARTICLES TABLE
+CREATE TABLE IF NOT EXISTS public.news_articles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  content TEXT NOT NULL,
+  event_id UUID REFERENCES public.economic_events(id) ON DELETE SET NULL,
+  related_asset_id UUID REFERENCES public.assets(id) ON DELETE SET NULL,
+  author_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  is_published BOOLEAN DEFAULT TRUE,
+  published_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_published ON public.news_articles(is_published, published_at DESC);
+
+-- ===================================================
 -- FUNCTIONS & RPCs ATÔMICAS DE SEGURANÇA E MATCHING
 -- ===================================================
 
@@ -509,7 +544,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- RPC 5: Matching Engine PostgreSQL (Price-Time Priority)
 CREATE OR REPLACE FUNCTION public.match_orders_for_asset(
   p_asset_id UUID
 )
@@ -523,33 +557,28 @@ DECLARE
   v_matches_count INTEGER := 0;
 BEGIN
   LOOP
-    -- Seleciona a melhor ordem de compra pendente (Maior Preço, Ordem mais antiga)
     SELECT * INTO v_buy_order
     FROM public.orders
     WHERE asset_id = p_asset_id AND side = 'buy' AND status = 'pending'
     ORDER BY price DESC, created_at ASC
     LIMIT 1 FOR UPDATE;
 
-    -- Seleciona a melhor ordem de venda pendente (Menor Preço, Ordem mais antiga)
     SELECT * INTO v_sell_order
     FROM public.orders
     WHERE asset_id = p_asset_id AND side = 'sell' AND status = 'pending'
     ORDER BY price ASC, created_at ASC
     LIMIT 1 FOR UPDATE;
 
-    -- Condição de saída: sem ofertas compatíveis
     IF v_buy_order.id IS NULL OR v_sell_order.id IS NULL OR v_buy_order.price < v_sell_order.price THEN
       EXIT;
     END IF;
 
-    -- Preço de execução (ordem mais antiga define o preço)
     IF v_buy_order.created_at <= v_sell_order.created_at THEN
       v_exec_price := v_buy_order.price;
     ELSE
       v_exec_price := v_sell_order.price;
     END IF;
 
-    -- Quantidade executada nesta rodada
     v_exec_qty := LEAST(v_buy_order.quantity - v_buy_order.filled_quantity, v_sell_order.quantity - v_sell_order.filled_quantity);
     v_total_cost := v_exec_price * v_exec_qty;
 
@@ -557,23 +586,19 @@ BEGIN
       EXIT;
     END IF;
 
-    -- 1. Registra o Trade
     INSERT INTO public.trades (asset_id, buy_order_id, sell_order_id, buyer_id, seller_id, price, quantity)
     VALUES (p_asset_id, v_buy_order.id, v_sell_order.id, v_buy_order.user_id, v_sell_order.user_id, v_exec_price, v_exec_qty);
 
-    -- 2. Atualiza filled_quantity da ordem de compra
     UPDATE public.orders
     SET filled_quantity = filled_quantity + v_exec_qty,
         status = CASE WHEN filled_quantity + v_exec_qty >= quantity THEN 'filled' ELSE 'pending' END
     WHERE id = v_buy_order.id;
 
-    -- 3. Atualiza filled_quantity da ordem de venda
     UPDATE public.orders
     SET filled_quantity = filled_quantity + v_exec_qty,
         status = CASE WHEN filled_quantity + v_exec_qty >= quantity THEN 'filled' ELSE 'pending' END
     WHERE id = v_sell_order.id;
 
-    -- 4. Ajusta Holdings do Comprador (Se for usuário real)
     IF v_buy_order.user_id IS NOT NULL THEN
       INSERT INTO public.holdings (user_id, asset_id, quantity, average_price)
       VALUES (v_buy_order.user_id, p_asset_id, v_exec_qty, v_exec_price)
@@ -582,7 +607,6 @@ BEGIN
           average_price = ROUND((holdings.quantity * holdings.average_price + v_total_cost) / (holdings.quantity + v_exec_qty)),
           updated_at = NOW();
 
-      -- Débito no saldo de moedas do comprador
       UPDATE public.profiles
       SET belmont_coins = GREATEST(0, belmont_coins - v_total_cost)
       WHERE id = v_buy_order.user_id;
@@ -591,14 +615,12 @@ BEGIN
       VALUES (v_buy_order.user_id, -v_total_cost, 'market_buy', 'Compra na Bolsa Belmont');
     END IF;
 
-    -- 5. Ajusta Holdings do Vendedor (Se for usuário real)
     IF v_sell_order.user_id IS NOT NULL THEN
       UPDATE public.holdings
       SET quantity = GREATEST(0, quantity - v_exec_qty),
           updated_at = NOW()
       WHERE user_id = v_sell_order.user_id AND asset_id = p_asset_id;
 
-      -- Crédito no saldo de moedas do vendedor
       UPDATE public.profiles
       SET belmont_coins = belmont_coins + v_total_cost
       WHERE id = v_sell_order.user_id;
@@ -607,7 +629,6 @@ BEGIN
       VALUES (v_sell_order.user_id, v_total_cost, 'market_sell', 'Venda na Bolsa Belmont');
     END IF;
 
-    -- 6. Atualiza Cotação do Ativo e Registra Histórico
     UPDATE public.assets
     SET current_price = v_exec_price,
         volume_24h = volume_24h + (v_exec_price * v_exec_qty)
@@ -649,6 +670,8 @@ ALTER TABLE public.market_agents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.trades ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.holdings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.economic_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.news_articles ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Profiles - read all authenticated" ON public.profiles;
 CREATE POLICY "Profiles - read all authenticated" ON public.profiles FOR SELECT USING (auth.role() = 'authenticated');
@@ -686,34 +709,24 @@ CREATE POLICY "Trades - read all authenticated" ON public.trades FOR SELECT USIN
 DROP POLICY IF EXISTS "Holdings - read all authenticated" ON public.holdings;
 CREATE POLICY "Holdings - read all authenticated" ON public.holdings FOR SELECT USING (auth.role() = 'authenticated');
 
+DROP POLICY IF EXISTS "Economic events - read all authenticated" ON public.economic_events;
+CREATE POLICY "Economic events - read all authenticated" ON public.economic_events FOR SELECT USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Economic events - admin manage" ON public.economic_events;
+CREATE POLICY "Economic events - admin manage" ON public.economic_events FOR ALL USING (public.is_admin());
+
+DROP POLICY IF EXISTS "News articles - read all authenticated" ON public.news_articles;
+CREATE POLICY "News articles - read all authenticated" ON public.news_articles FOR SELECT USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "News articles - admin manage" ON public.news_articles;
+CREATE POLICY "News articles - admin manage" ON public.news_articles FOR ALL USING (public.is_admin());
+
 -- ===================================================
--- SEED DATA: ATIVOS E NPCs DA BOLSA
+-- SEED DATA: ATIVOS, EVENTOS E NOTÍCIAS
 -- ===================================================
 
 INSERT INTO public.conversations (id, title, is_group, is_general_chat)
 VALUES ('00000000-0000-0000-0000-000000000001', 'Chat Geral Belmont', TRUE, TRUE)
-ON CONFLICT (id) DO NOTHING;
-
-INSERT INTO public.welcome_content (id, title, content, rules)
-VALUES (
-  '00000000-0000-0000-0000-000000000002',
-  'Bem-vindo ao Belmont Core 2.0',
-  'Esta é a plataforma social privada e exclusiva da Mansão Belmont. Aqui reunimos inteligência, discussões estratégicas, projetos pessoais e comunicação em tempo real em um ambiente refinado.',
-  ARRAY[
-    'Mantenha a confidencialidade das discussões da Mansão.',
-    'Respeite a ordem visual e a etiqueta de comunicação.',
-    'Contribua com insights de valor nos tópicos e chats.'
-  ]
-)
-ON CONFLICT (id) DO NOTHING;
-
-INSERT INTO public.achievements (id, title, description, icon, category, rarity, xp_reward, coins_reward)
-VALUES
-  ('first_post', 'Primeiro Passo', 'Criou sua primeira publicação no Feed da Mansão.', 'Compass', 'social', 'common', 50, 25),
-  ('first_chat', 'Voz da Mansão', 'Enviou sua primeira mensagem no Chat Geral.', 'MessageSquare', 'community', 'common', 50, 25),
-  ('first_dm', 'Primeiro Contato', 'Enviou uma mensagem privada para outro membro.', 'Send', 'social', 'common', 50, 25),
-  ('chroncler', 'Cronista', 'Criou 10 publicações no Feed.', 'Feather', 'community', 'rare', 200, 100),
-  ('founder', 'Fundador da Mansão', 'Membro fundador presente na inauguração do Belmont Core 2.0.', 'Shield', 'special', 'legendary', 500, 250)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.assets (id, symbol, name, description, current_price, change_24h, volume_24h)
@@ -726,10 +739,46 @@ VALUES
   ('a0000000-0000-0000-0000-000000000006', 'HELL', 'Hellfire Venture', 'Fundo especulativo para alavancagem e projetos de alta incerteza.', 55, -5.20, 19500)
 ON CONFLICT (symbol) DO NOTHING;
 
-INSERT INTO public.market_agents (id, name, personality, cash_balance)
+INSERT INTO public.economic_events (id, title, description, type, target_asset_id, impact_score, is_active)
 VALUES
-  ('b0000000-0000-0000-0000-000000000001', 'Victor Belmont (NPC)', 'accumulator', 50000),
-  ('b0000000-0000-0000-0000-000000000002', 'Carmilla Trades (NPC)', 'trader', 35000),
-  ('b0000000-0000-0000-0000-000000000003', 'Dracula Ventures (NPC)', 'speculator', 80000),
-  ('b0000000-0000-0000-0000-000000000004', 'Sypha Analytics (NPC)', 'conservative', 25000)
-ON CONFLICT (name) DO NOTHING;
+  (
+    'e0000000-0000-0000-0000-000000000001',
+    'Expansão da Infraestrutura da Mansão',
+    'Castle Holding confirma aporte para ampliação das dependências e novos servidores privados.',
+    'positive',
+    'a0000000-0000-0000-0000-000000000003',
+    0.35,
+    TRUE
+  ),
+  (
+    'e0000000-0000-0000-0000-000000000002',
+    'Rumor de Criptografia Noturna',
+    'Especula-se que a Nocturne Energy fechou contrato de comunicação segura com entidade governamental.',
+    'rumor',
+    'a0000000-0000-0000-0000-000000000004',
+    0.50,
+    TRUE
+  )
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO public.news_articles (id, title, summary, content, event_id, related_asset_id, is_published)
+VALUES
+  (
+    'c0000000-0000-0000-0000-000000000001',
+    'Castle Holding Anuncia Expansão de Infraestrutura na Mansão',
+    'A diretoria da Castle Holding confirmou nesta manhã um novo aporte de liquidez.',
+    'A Castle Holding oficializou o investimento na infraestrutura de servidores e segurança da Mansão Belmont. A expectativa de mercado é de fortalecimento nos ativos operacionais.',
+    'e0000000-0000-0000-0000-000000000001',
+    'a0000000-0000-0000-0000-000000000003',
+    TRUE
+  ),
+  (
+    'c0000000-0000-0000-0000-000000000002',
+    'Rumores sobre Nova Tecnologia da Nocturne Energy Movimentam Corretores',
+    'Fontes anônimas relatam tratativas da Nocturne para fornecimento de canais criptografados.',
+    'Rumores no mercado financeiro noturno apontam para a iminente assinatura de contrato exclusivo pela Nocturne Energy. Agentes do mercado já observam movimentações nos livros de ofertas.',
+    'e0000000-0000-0000-0000-000000000002',
+    'a0000000-0000-0000-0000-000000000004',
+    TRUE
+  )
+ON CONFLICT (id) DO NOTHING;
