@@ -27,7 +27,7 @@ async function runMarketCycle() {
     const timestamp = new Date().toISOString();
     console.log(`\n[BELMONT MARKET ENGINE] === Cycle Started at ${timestamp} ===`);
 
-    // 2. Process each asset with Market Making liquidity (Spread placement around current price)
+    // 2. Process each asset with Market Making liquidity (Frequent Crossing Bids & Asks)
     for (const asset of assets) {
       const currentPrice = asset.current_price;
 
@@ -50,35 +50,42 @@ async function runMarketCycle() {
       );
       const sellerQtyAvailable = holdingRes.rows[0]?.quantity || 0;
 
-      // Determine Prices around current price
-      const bidPrice = Math.max(1, currentPrice - (sentimentScore < 0 ? 2 : 1));
-      const askPrice = currentPrice + (sentimentScore > 0 ? 1 : 2);
-      const qty = Math.floor(Math.random() * 8) + 2;
+      // Ensure seller has at least 50 units for continuous trading
+      if (sellerQtyAvailable < 10) {
+        await client.query(
+          `INSERT INTO public.market_agent_holdings (agent_id, asset_id, quantity)
+           VALUES ($1, $2, 500)
+           ON CONFLICT (agent_id, asset_id) DO UPDATE SET quantity = market_agent_holdings.quantity + 500;`,
+          [sellerAgent.id, asset.id]
+        );
+      }
 
-      // Place BUY Limit Order from Buyer NPC
+      // Determine Prices: allow price variation (-2 to +2 coins) based on market sentiment
+      const priceDelta = (Math.random() > 0.4 ? 1 : -1) * Math.floor(Math.random() * 2 + (sentimentScore > 0 ? 1 : 0));
+      const tradePrice = Math.max(1, currentPrice + priceDelta);
+      const qty = Math.floor(Math.random() * 6) + 1;
+
+      // Place Matching BUY & SELL Orders at tradePrice to guarantee trade execution
       await client.query(
         `INSERT INTO public.orders (agent_id, asset_id, side, order_type, price, quantity, filled_quantity, status)
          VALUES ($1, $2, 'buy', 'limit', $3, $4, 0, 'pending');`,
-        [buyerAgent.id, asset.id, bidPrice, qty]
+        [buyerAgent.id, asset.id, tradePrice, qty]
       );
-      console.log(`[MARKET MAKER] ${buyerAgent.name} -> BID ${qty}x ${asset.symbol} @ ${bidPrice} Coins`);
 
-      // Place SELL Limit Order from Seller NPC (if holding > 0)
-      if (sellerQtyAvailable >= qty) {
-        await client.query(
-          `INSERT INTO public.orders (agent_id, asset_id, side, order_type, price, quantity, filled_quantity, status)
-           VALUES ($1, $2, 'sell', 'limit', $3, $4, 0, 'pending');`,
-          [sellerAgent.id, asset.id, askPrice, qty]
-        );
-        console.log(`[MARKET MAKER] ${sellerAgent.name} -> ASK ${qty}x ${asset.symbol} @ ${askPrice} Coins`);
-      }
+      await client.query(
+        `INSERT INTO public.orders (agent_id, asset_id, side, order_type, price, quantity, filled_quantity, status)
+         VALUES ($1, $2, 'sell', 'limit', $3, $4, 0, 'pending');`,
+        [sellerAgent.id, asset.id, tradePrice, qty]
+      );
+
+      console.log(`[TRADE GENERATOR] ${buyerAgent.name} BUY & ${sellerAgent.name} SELL ${qty}x ${asset.symbol} @ ${tradePrice} Coins`);
 
       // 3. Trigger PostgreSQL Matching Engine
       const matchRes = await client.query('SELECT public.match_orders_for_asset($1);', [asset.id]);
       const matches = matchRes.rows[0]?.match_orders_for_asset || 0;
 
       if (matches > 0) {
-        console.log(`[MATCHING ENGINE] ${matches} trade(s) executed for ${asset.symbol}`);
+        console.log(`[MATCHING ENGINE] ${matches} trade(s) executed for ${asset.symbol} @ ${tradePrice} Coins`);
       }
     }
 
