@@ -29,17 +29,18 @@ async function runMarketCycle() {
 
     const getRandomAgent = () => agents[Math.floor(Math.random() * agents.length)];
 
-    // 2. Process each asset: place depth and guaranteed crossing trades
+    // 2. Process each asset with organic random walk volatility
     for (const asset of assets) {
       const currentPrice = asset.current_price;
 
-      // Event Sentiment & Sine Wave fluctuation
+      // Event Sentiment & Micro-wave Fluctuation
       const assetEvents = activeEvents.filter(e => e.target_asset_id === asset.id);
       const eventSentiment = assetEvents.reduce((acc, curr) => acc + parseFloat(curr.impact_score || 0), 0);
 
-      const wave = Math.sin(Date.now() / 25000) * 1.5;
-      const noise = (Math.random() - 0.48) * 2;
-      const priceDelta = Math.round(eventSentiment + wave + noise);
+      // Random Walk delta (-3 to +3 Coins) for realistic candle bodies and wicks
+      const stepDirection = Math.random() > 0.48 ? 1 : -1;
+      const stepMagnitude = Math.floor(Math.random() * 3) + 1; // 1, 2, or 3
+      const priceDelta = (stepDirection * stepMagnitude) + Math.round(eventSentiment * 0.5);
 
       const centralPrice = Math.max(5, currentPrice + priceDelta);
 
@@ -53,29 +54,29 @@ async function runMarketCycle() {
         );
       }
 
-      // A) Create Book Depth: 2 Bids below centralPrice and 2 Asks above centralPrice
+      // A) Create Book Depth (2 Bids below centralPrice, 2 Asks above centralPrice)
       const buyer1 = getRandomAgent();
       const seller1 = getRandomAgent();
 
       await client.query(
         `INSERT INTO public.orders (agent_id, asset_id, side, order_type, price, quantity, filled_quantity, status)
          VALUES ($1, $2, 'buy', 'limit', $3, $4, 0, 'pending');`,
-        [buyer1.id, asset.id, Math.max(1, centralPrice - 1), Math.floor(Math.random() * 15) + 5]
+        [buyer1.id, asset.id, Math.max(1, centralPrice - 2), Math.floor(Math.random() * 20) + 5]
       );
 
       await client.query(
         `INSERT INTO public.orders (agent_id, asset_id, side, order_type, price, quantity, filled_quantity, status)
          VALUES ($1, $2, 'sell', 'limit', $3, $4, 0, 'pending');`,
-        [seller1.id, asset.id, centralPrice + 1, Math.floor(Math.random() * 15) + 5]
+        [seller1.id, asset.id, centralPrice + 2, Math.floor(Math.random() * 20) + 5]
       );
 
-      // B) Create Guaranteed Match Order at centralPrice
+      // B) Create Match Orders at centralPrice to execute trade and log new price
       const buyer2 = getRandomAgent();
       let seller2 = getRandomAgent();
       if (seller2.id === buyer2.id && agents.length > 1) {
         seller2 = agents.find(a => a.id !== buyer2.id) || seller2;
       }
-      const tradeQty = Math.floor(Math.random() * 20) + 5;
+      const tradeQty = Math.floor(Math.random() * 25) + 5;
 
       await client.query(
         `INSERT INTO public.orders (agent_id, asset_id, side, order_type, price, quantity, filled_quantity, status)
@@ -89,11 +90,11 @@ async function runMarketCycle() {
         [seller2.id, asset.id, centralPrice, tradeQty]
       );
 
-      // C) Trigger PostgreSQL Matching Engine with explicit ::uuid cast
+      // C) Trigger PostgreSQL Matching Engine
       const matchRes = await client.query('SELECT public.match_orders_for_asset($1::uuid);', [asset.id]);
       const matches = matchRes.rows[0]?.match_orders_for_asset || 0;
 
-      console.log(`[TRADE] ${asset.symbol}: ${matches} trade(s) executed @ ${centralPrice} Coins`);
+      console.log(`[TRADE] ${asset.symbol}: ${matches} trade(s) executed @ ${centralPrice} Coins (Delta: ${priceDelta > 0 ? '+' : ''}${priceDelta})`);
     }
 
     console.log(`[BELMONT MARKET ENGINE] === Cycle Completed Successfully ===`);

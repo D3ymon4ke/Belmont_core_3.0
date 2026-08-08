@@ -11,7 +11,7 @@ interface Candle {
   low: number
   close: number
   volume: number
-  timestampMs: number
+  count: number
 }
 
 interface CandleChartProps {
@@ -36,58 +36,80 @@ export const CandleChart: React.FC<CandleChartProps> = ({ assetId, currentPrice 
           .select('*')
           .eq('asset_id', assetId)
           .order('created_at', { ascending: true })
-          .limit(200)
+          .limit(300)
 
         const logs = priceLogs || []
-        const now = Date.now()
-        const stepMs = timeframe === '1m' ? 60000 : timeframe === '5m' ? 300000 : timeframe === '15m' ? 900000 : timeframe === '1h' ? 3600000 : 86400000
-        const totalBars = 15
 
-        // Generate 15 continuous time slots ending at `now`
-        const slots: Candle[] = []
-        let lastPrice = currentPrice
-
-        for (let i = totalBars - 1; i >= 0; i--) {
-          const slotEndTime = now - (i * stepMs)
-          const slotStartTime = slotEndTime - stepMs
-
-          // Find logs in this time window
-          const logsInSlot = logs.filter((l: any) => {
-            const t = new Date(l.created_at).getTime()
-            return t >= slotStartTime && t <= slotEndTime
-          })
-
-          const timeFormatted = new Date(slotEndTime).toLocaleTimeString('pt-BR', {
-            hour: '2-digit',
-            minute: '2-digit',
-          })
-
-          if (logsInSlot.length > 0) {
-            const prices = logsInSlot.map((l: any) => l.price)
-            const open = prices[0]
-            const close = prices[prices.length - 1]
-            const high = Math.max(...prices)
-            const low = Math.min(...prices)
-            const volume = logsInSlot.reduce((sum: number, l: any) => sum + (l.volume || 1), 0)
-
-            lastPrice = close
-            slots.push({ time: timeFormatted, open, high, low, close, volume, timestampMs: slotEndTime })
-          } else {
-            // Carry forward last price for smooth continuous chart
-            slots.push({
-              time: timeFormatted,
-              open: lastPrice,
-              high: lastPrice,
-              low: lastPrice,
-              close: lastPrice,
-              volume: 0,
-              timestampMs: slotEndTime,
-            })
+        if (logs.length === 0) {
+          const fallbackCandle: Candle = {
+            time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+            open: currentPrice,
+            high: currentPrice + 1,
+            low: Math.max(1, currentPrice - 1),
+            close: currentPrice,
+            volume: 10,
+            count: 1,
           }
+          setCandles([fallbackCandle])
+          setHoveredCandle(fallbackCandle)
+          setIsLoading(false)
+          return
         }
 
-        setCandles(slots)
-        setHoveredCandle(slots[slots.length - 1] || null)
+        // Group actual logs into distinct time-bucket candles
+        const groupedMap = new Map<string, any[]>()
+
+        for (const log of logs) {
+          const d = new Date(log.created_at)
+          let key: string
+
+          if (timeframe === '1m') {
+            const minStr = String(d.getMinutes()).padStart(2, '0')
+            key = `${d.getHours()}:${minStr}`
+          } else if (timeframe === '5m') {
+            const min = Math.floor(d.getMinutes() / 5) * 5
+            const minStr = String(min).padStart(2, '0')
+            key = `${d.getHours()}:${minStr}`
+          } else if (timeframe === '15m') {
+            const min = Math.floor(d.getMinutes() / 15) * 15
+            const minStr = String(min).padStart(2, '0')
+            key = `${d.getHours()}:${minStr}`
+          } else if (timeframe === '1h') {
+            key = `${d.getHours()}:00`
+          } else {
+            key = `${d.getDate()}/${d.getMonth() + 1}`
+          }
+
+          if (!groupedMap.has(key)) {
+            groupedMap.set(key, [])
+          }
+          groupedMap.get(key)!.push(log)
+        }
+
+        const realCandles: Candle[] = []
+        for (const [timeKey, bucketLogs] of groupedMap.entries()) {
+          const prices = bucketLogs.map((l) => l.price)
+          const open = prices[0]
+          const close = prices[prices.length - 1]
+          const high = Math.max(...prices)
+          const low = Math.min(...prices)
+          const volume = bucketLogs.reduce((sum, l) => sum + (l.volume || 1), 0)
+
+          realCandles.push({
+            time: timeKey,
+            open,
+            high,
+            low,
+            close,
+            volume,
+            count: bucketLogs.length,
+          })
+        }
+
+        // Keep last 20 real candles
+        const finalCandles = realCandles.slice(-20)
+        setCandles(finalCandles)
+        setHoveredCandle(finalCandles[finalCandles.length - 1] || null)
       } catch (e) {
         setCandles([])
       } finally {
@@ -194,9 +216,9 @@ export const CandleChart: React.FC<CandleChartProps> = ({ assetId, currentPrice 
 
               const bodyTop = Math.max(openPct, closePct)
               const bodyBottom = Math.min(openPct, closePct)
-              const bodyHeight = Math.max(6, bodyTop - bodyBottom)
+              const bodyHeight = Math.max(8, bodyTop - bodyBottom)
 
-              const volumeHeight = Math.min(25, Math.max(2, (c.volume / maxVolume) * 22))
+              const volumeHeight = Math.min(25, Math.max(4, (c.volume / maxVolume) * 22))
 
               return (
                 <div
