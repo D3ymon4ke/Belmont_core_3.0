@@ -180,7 +180,7 @@ CREATE TABLE IF NOT EXISTS public.coin_transactions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   amount INTEGER NOT NULL,
-  type TEXT NOT NULL, -- 'reward', 'purchase', 'game', 'event', 'admin', 'adjustment'
+  type TEXT NOT NULL,
   description TEXT NOT NULL,
   reference_id TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
@@ -202,8 +202,8 @@ CREATE TABLE IF NOT EXISTS public.achievements (
   title TEXT NOT NULL,
   description TEXT NOT NULL,
   icon TEXT NOT NULL,
-  category TEXT NOT NULL, -- 'social', 'community', 'mansion', 'special'
-  rarity TEXT NOT NULL,   -- 'common', 'rare', 'epic', 'legendary'
+  category TEXT NOT NULL,
+  rarity TEXT NOT NULL,
   xp_reward INTEGER DEFAULT 50,
   coins_reward INTEGER DEFAULT 25,
   created_at TIMESTAMPTZ DEFAULT NOW()
@@ -236,11 +236,9 @@ BEGIN
     RAISE EXCEPTION 'Acesso negado: Somente administradores podem ajustar moedas.';
   END IF;
 
-  -- Insert Transaction Record
   INSERT INTO public.coin_transactions (user_id, amount, type, description)
   VALUES (p_user_id, p_amount, 'admin', p_description);
 
-  -- Update Profile Balance
   UPDATE public.profiles
   SET belmont_coins = GREATEST(0, belmont_coins + p_amount),
       updated_at = NOW()
@@ -260,7 +258,6 @@ DECLARE
   new_xp INTEGER;
   new_rank TEXT;
 BEGIN
-  -- Insert or update user progress
   INSERT INTO public.user_progress (user_id, xp, rank_title)
   VALUES (p_user_id, GREATEST(0, p_xp_amount), 'Iniciado')
   ON CONFLICT (user_id) DO UPDATE
@@ -268,7 +265,6 @@ BEGIN
       updated_at = NOW()
   RETURNING xp INTO new_xp;
 
-  -- Evaluate Rank Thresholds
   IF new_xp >= 10000 THEN
     new_rank := 'Mestre da Mansão';
   ELSIF new_xp >= 5000 THEN
@@ -285,7 +281,6 @@ BEGIN
     new_rank := 'Iniciado';
   END IF;
 
-  -- Update profile rank title
   UPDATE public.profiles
   SET rank_title = new_rank,
       updated_at = NOW()
@@ -310,7 +305,6 @@ DECLARE
   v_coins_reward INTEGER;
   v_title TEXT;
 BEGIN
-  -- Check if achievement exists
   SELECT xp_reward, coins_reward, title INTO v_xp_reward, v_coins_reward, v_title
   FROM public.achievements
   WHERE id = p_achievement_id;
@@ -319,12 +313,10 @@ BEGIN
     RETURN FALSE;
   END IF;
 
-  -- Insert user achievement record
   INSERT INTO public.user_achievements (user_id, achievement_id)
   VALUES (p_user_id, p_achievement_id)
   ON CONFLICT (user_id, achievement_id) DO NOTHING;
 
-  -- Grant Rewards
   IF v_xp_reward > 0 THEN
     PERFORM public.add_xp_and_evaluate_rank(p_user_id, v_xp_reward);
   END IF;
@@ -343,7 +335,7 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ===================================================
--- ROW LEVEL SECURITY (RLS) POLICIES — FASE 4
+-- ROW LEVEL SECURITY (RLS) POLICIES
 -- ===================================================
 
 ALTER TABLE public.coin_transactions ENABLE ROW LEVEL SECURITY;
@@ -351,17 +343,19 @@ ALTER TABLE public.user_progress ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.achievements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_achievements ENABLE ROW LEVEL SECURITY;
 
--- Coin Transactions Policies
+DROP POLICY IF EXISTS "Coin transactions - read own" ON public.coin_transactions;
 CREATE POLICY "Coin transactions - read own" ON public.coin_transactions FOR SELECT USING (user_id = auth.uid() OR public.is_admin());
 
--- User Progress Policies
+DROP POLICY IF EXISTS "User progress - read all authenticated" ON public.user_progress;
 CREATE POLICY "User progress - read all authenticated" ON public.user_progress FOR SELECT USING (auth.role() = 'authenticated');
 
--- Achievements Catalogue Policies
+DROP POLICY IF EXISTS "Achievements - read all authenticated" ON public.achievements;
 CREATE POLICY "Achievements - read all authenticated" ON public.achievements FOR SELECT USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Achievements - admin modify" ON public.achievements;
 CREATE POLICY "Achievements - admin modify" ON public.achievements FOR ALL USING (public.is_admin());
 
--- User Achievements Policies
+DROP POLICY IF EXISTS "User achievements - read all authenticated" ON public.user_achievements;
 CREATE POLICY "User achievements - read all authenticated" ON public.user_achievements FOR SELECT USING (auth.role() = 'authenticated');
 
 -- ===================================================
