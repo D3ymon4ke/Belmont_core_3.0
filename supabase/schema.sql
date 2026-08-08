@@ -229,7 +229,7 @@ CREATE TABLE IF NOT EXISTS public.bank_accounts (
   user_id UUID PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
   balance INTEGER DEFAULT 0 CHECK (balance >= 0),
   accrued_yield INTEGER DEFAULT 0 CHECK (accrued_yield >= 0),
-  yield_rate NUMERIC(5,4) DEFAULT 0.0100, -- 1.00% ao dia
+  yield_rate NUMERIC(5,4) DEFAULT 0.0100,
   last_yield_calculated_at TIMESTAMPTZ DEFAULT NOW(),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -239,7 +239,7 @@ CREATE TABLE IF NOT EXISTS public.bank_accounts (
 CREATE TABLE IF NOT EXISTS public.bank_transactions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-  type TEXT NOT NULL, -- 'deposit', 'withdraw', 'yield', 'transfer_in', 'transfer_out'
+  type TEXT NOT NULL,
   amount INTEGER NOT NULL,
   description TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
@@ -275,7 +275,7 @@ CREATE INDEX IF NOT EXISTS idx_asset_prices_asset ON public.asset_prices(asset_i
 CREATE TABLE IF NOT EXISTS public.market_agents (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT UNIQUE NOT NULL,
-  personality TEXT NOT NULL, -- 'conservative', 'trader', 'accumulator', 'realizer', 'speculator'
+  personality TEXT NOT NULL,
   cash_balance INTEGER DEFAULT 10000 CHECK (cash_balance >= 0),
   is_active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMPTZ DEFAULT NOW()
@@ -287,12 +287,12 @@ CREATE TABLE IF NOT EXISTS public.orders (
   user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
   agent_id UUID REFERENCES public.market_agents(id) ON DELETE CASCADE,
   asset_id UUID NOT NULL REFERENCES public.assets(id) ON DELETE CASCADE,
-  side TEXT NOT NULL, -- 'buy', 'sell'
-  order_type TEXT NOT NULL, -- 'market', 'limit'
+  side TEXT NOT NULL,
+  order_type TEXT NOT NULL,
   price INTEGER NOT NULL CHECK (price > 0),
   quantity INTEGER NOT NULL CHECK (quantity > 0),
   filled_quantity INTEGER DEFAULT 0 CHECK (filled_quantity >= 0),
-  status TEXT DEFAULT 'pending', -- 'pending', 'filled', 'cancelled'
+  status TEXT DEFAULT 'pending',
   created_at TIMESTAMPTZ DEFAULT NOW(),
   CONSTRAINT check_order_owner CHECK (user_id IS NOT NULL OR agent_id IS NOT NULL)
 );
@@ -328,10 +328,9 @@ CREATE TABLE IF NOT EXISTS public.holdings (
 CREATE INDEX IF NOT EXISTS idx_holdings_user ON public.holdings(user_id);
 
 -- ===================================================
--- FASE 5: FUNCTIONS & RPCs ATÔMICAS DE SEGURANÇA
+-- FUNCTIONS & RPCs ATÔMICAS DE SEGURANÇA E MATCHING
 -- ===================================================
 
--- RPC 1: Depósito no Banco Belmont
 CREATE OR REPLACE FUNCTION public.bank_deposit(
   p_user_id UUID,
   p_amount INTEGER
@@ -352,20 +351,17 @@ BEGIN
     RAISE EXCEPTION 'Saldo em Belmont Coins insuficiente para realizar o depósito.';
   END IF;
 
-  -- Débito no saldo de moedas líquidas
   UPDATE public.profiles
   SET belmont_coins = belmont_coins - p_amount,
       updated_at = NOW()
   WHERE id = p_user_id;
 
-  -- Crédito na conta bancária
   INSERT INTO public.bank_accounts (user_id, balance)
   VALUES (p_user_id, p_amount)
   ON CONFLICT (user_id) DO UPDATE
   SET balance = bank_accounts.balance + p_amount,
       updated_at = NOW();
 
-  -- Registra transações auditáveis
   INSERT INTO public.coin_transactions (user_id, amount, type, description)
   VALUES (p_user_id, -p_amount, 'bank_deposit', 'Depósito no Banco Belmont');
 
@@ -376,7 +372,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- RPC 2: Saque do Banco Belmont
 CREATE OR REPLACE FUNCTION public.bank_withdraw(
   p_user_id UUID,
   p_amount INTEGER
@@ -397,19 +392,16 @@ BEGIN
     RAISE EXCEPTION 'Saldo bancário insuficiente para realizar o saque.';
   END IF;
 
-  -- Débito na conta bancária
   UPDATE public.bank_accounts
   SET balance = balance - p_amount,
       updated_at = NOW()
   WHERE user_id = p_user_id;
 
-  -- Crédito nas moedas líquidas
   UPDATE public.profiles
   SET belmont_coins = belmont_coins + p_amount,
       updated_at = NOW()
   WHERE id = p_user_id;
 
-  -- Registra transações auditáveis
   INSERT INTO public.coin_transactions (user_id, amount, type, description)
   VALUES (p_user_id, p_amount, 'bank_withdraw', 'Saque do Banco Belmont');
 
@@ -420,7 +412,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- RPC 3: Cálculo Idempotente de Rendimento do Banco
 CREATE OR REPLACE FUNCTION public.calculate_bank_yield_idempotent(
   p_user_id UUID
 )
@@ -441,7 +432,6 @@ BEGIN
     RETURN 0;
   END IF;
 
-  -- Calcula quantidade de dias desde a última apuração
   v_days := EXTRACT(DAY FROM (NOW() - v_last_calc));
 
   IF v_days >= 1 THEN
@@ -464,7 +454,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- RPC 4: Transferência P2P entre Membros (Atômica & Segura)
 CREATE OR REPLACE FUNCTION public.transfer_coins_p2p(
   p_sender_id UUID,
   p_recipient_id UUID,
@@ -484,7 +473,6 @@ BEGIN
     RAISE EXCEPTION 'O valor da transferência deve ser maior que zero.';
   END IF;
 
-  -- Lock no saldo do remetente
   SELECT belmont_coins INTO v_sender_balance
   FROM public.profiles
   WHERE id = p_sender_id FOR UPDATE;
@@ -493,7 +481,6 @@ BEGIN
     RAISE EXCEPTION 'Saldo insuficiente para realizar a transferência.';
   END IF;
 
-  -- Obter nome do destinatário
   SELECT display_name INTO v_recipient_name
   FROM public.profiles
   WHERE id = p_recipient_id;
@@ -502,23 +489,19 @@ BEGIN
     RAISE EXCEPTION 'Membro destinatário não foi localizado no Belmont Core.';
   END IF;
 
-  -- Débito no remetente
   UPDATE public.profiles
   SET belmont_coins = belmont_coins - p_amount,
       updated_at = NOW()
   WHERE id = p_sender_id;
 
-  -- Crédito no destinatário
   UPDATE public.profiles
   SET belmont_coins = belmont_coins + p_amount,
       updated_at = NOW()
   WHERE id = p_recipient_id;
 
-  -- Registra histórico para o remetente
   INSERT INTO public.coin_transactions (user_id, amount, type, description, reference_id)
   VALUES (p_sender_id, -p_amount, 'transfer_out', COALESCE(p_description, 'Transferência enviada para ' || v_recipient_name), p_recipient_id::text);
 
-  -- Registra histórico para o destinatário
   INSERT INTO public.coin_transactions (user_id, amount, type, description, reference_id)
   VALUES (p_recipient_id, p_amount, 'transfer_in', 'Transferência recebida de membro da Mansão', p_sender_id::text);
 
@@ -526,10 +509,138 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+-- RPC 5: Matching Engine PostgreSQL (Price-Time Priority)
+CREATE OR REPLACE FUNCTION public.match_orders_for_asset(
+  p_asset_id UUID
+)
+RETURNS INTEGER AS $$
+DECLARE
+  v_buy_order RECORD;
+  v_sell_order RECORD;
+  v_exec_qty INTEGER;
+  v_exec_price INTEGER;
+  v_total_cost INTEGER;
+  v_matches_count INTEGER := 0;
+BEGIN
+  LOOP
+    -- Seleciona a melhor ordem de compra pendente (Maior Preço, Ordem mais antiga)
+    SELECT * INTO v_buy_order
+    FROM public.orders
+    WHERE asset_id = p_asset_id AND side = 'buy' AND status = 'pending'
+    ORDER BY price DESC, created_at ASC
+    LIMIT 1 FOR UPDATE;
+
+    -- Seleciona a melhor ordem de venda pendente (Menor Preço, Ordem mais antiga)
+    SELECT * INTO v_sell_order
+    FROM public.orders
+    WHERE asset_id = p_asset_id AND side = 'sell' AND status = 'pending'
+    ORDER BY price ASC, created_at ASC
+    LIMIT 1 FOR UPDATE;
+
+    -- Condição de saída: sem ofertas compatíveis
+    IF v_buy_order.id IS NULL OR v_sell_order.id IS NULL OR v_buy_order.price < v_sell_order.price THEN
+      EXIT;
+    END IF;
+
+    -- Preço de execução (ordem mais antiga define o preço)
+    IF v_buy_order.created_at <= v_sell_order.created_at THEN
+      v_exec_price := v_buy_order.price;
+    ELSE
+      v_exec_price := v_sell_order.price;
+    END IF;
+
+    -- Quantidade executada nesta rodada
+    v_exec_qty := LEAST(v_buy_order.quantity - v_buy_order.filled_quantity, v_sell_order.quantity - v_sell_order.filled_quantity);
+    v_total_cost := v_exec_price * v_exec_qty;
+
+    IF v_exec_qty <= 0 THEN
+      EXIT;
+    END IF;
+
+    -- 1. Registra o Trade
+    INSERT INTO public.trades (asset_id, buy_order_id, sell_order_id, buyer_id, seller_id, price, quantity)
+    VALUES (p_asset_id, v_buy_order.id, v_sell_order.id, v_buy_order.user_id, v_sell_order.user_id, v_exec_price, v_exec_qty);
+
+    -- 2. Atualiza filled_quantity da ordem de compra
+    UPDATE public.orders
+    SET filled_quantity = filled_quantity + v_exec_qty,
+        status = CASE WHEN filled_quantity + v_exec_qty >= quantity THEN 'filled' ELSE 'pending' END
+    WHERE id = v_buy_order.id;
+
+    -- 3. Atualiza filled_quantity da ordem de venda
+    UPDATE public.orders
+    SET filled_quantity = filled_quantity + v_exec_qty,
+        status = CASE WHEN filled_quantity + v_exec_qty >= quantity THEN 'filled' ELSE 'pending' END
+    WHERE id = v_sell_order.id;
+
+    -- 4. Ajusta Holdings do Comprador (Se for usuário real)
+    IF v_buy_order.user_id IS NOT NULL THEN
+      INSERT INTO public.holdings (user_id, asset_id, quantity, average_price)
+      VALUES (v_buy_order.user_id, p_asset_id, v_exec_qty, v_exec_price)
+      ON CONFLICT (user_id, asset_id) DO UPDATE
+      SET quantity = holdings.quantity + v_exec_qty,
+          average_price = ROUND((holdings.quantity * holdings.average_price + v_total_cost) / (holdings.quantity + v_exec_qty)),
+          updated_at = NOW();
+
+      -- Débito no saldo de moedas do comprador
+      UPDATE public.profiles
+      SET belmont_coins = GREATEST(0, belmont_coins - v_total_cost)
+      WHERE id = v_buy_order.user_id;
+
+      INSERT INTO public.coin_transactions (user_id, amount, type, description)
+      VALUES (v_buy_order.user_id, -v_total_cost, 'market_buy', 'Compra na Bolsa Belmont');
+    END IF;
+
+    -- 5. Ajusta Holdings do Vendedor (Se for usuário real)
+    IF v_sell_order.user_id IS NOT NULL THEN
+      UPDATE public.holdings
+      SET quantity = GREATEST(0, quantity - v_exec_qty),
+          updated_at = NOW()
+      WHERE user_id = v_sell_order.user_id AND asset_id = p_asset_id;
+
+      -- Crédito no saldo de moedas do vendedor
+      UPDATE public.profiles
+      SET belmont_coins = belmont_coins + v_total_cost
+      WHERE id = v_sell_order.user_id;
+
+      INSERT INTO public.coin_transactions (user_id, amount, type, description)
+      VALUES (v_sell_order.user_id, v_total_cost, 'market_sell', 'Venda na Bolsa Belmont');
+    END IF;
+
+    -- 6. Atualiza Cotação do Ativo e Registra Histórico
+    UPDATE public.assets
+    SET current_price = v_exec_price,
+        volume_24h = volume_24h + (v_exec_price * v_exec_qty)
+    WHERE id = p_asset_id;
+
+    INSERT INTO public.asset_prices (asset_id, price, volume)
+    VALUES (p_asset_id, v_exec_price, v_exec_qty);
+
+    v_matches_count := v_matches_count + 1;
+  END LOOP;
+
+  RETURN v_matches_count;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- ===================================================
--- ROW LEVEL SECURITY (RLS) POLICIES — FASE 5
+-- ROW LEVEL SECURITY (RLS) POLICIES — ALL TABLES
 -- ===================================================
 
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.welcome_content ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.announcements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.posts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.post_likes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.post_comments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.conversation_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.coin_transactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_progress ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.achievements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_achievements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bank_accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bank_transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.assets ENABLE ROW LEVEL SECURITY;
@@ -538,6 +649,15 @@ ALTER TABLE public.market_agents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.trades ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.holdings ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Profiles - read all authenticated" ON public.profiles;
+CREATE POLICY "Profiles - read all authenticated" ON public.profiles FOR SELECT USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Profiles - update own profile" ON public.profiles;
+CREATE POLICY "Profiles - update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
+
+DROP POLICY IF EXISTS "Profiles - insert own profile" ON public.profiles;
+CREATE POLICY "Profiles - insert own profile" ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
 
 DROP POLICY IF EXISTS "Bank accounts - read own" ON public.bank_accounts;
 CREATE POLICY "Bank accounts - read own" ON public.bank_accounts FOR SELECT USING (user_id = auth.uid() OR public.is_admin());
@@ -557,6 +677,9 @@ CREATE POLICY "Market agents - read all authenticated" ON public.market_agents F
 DROP POLICY IF EXISTS "Orders - read all authenticated" ON public.orders;
 CREATE POLICY "Orders - read all authenticated" ON public.orders FOR SELECT USING (auth.role() = 'authenticated');
 
+DROP POLICY IF EXISTS "Orders - insert own" ON public.orders;
+CREATE POLICY "Orders - insert own" ON public.orders FOR INSERT WITH CHECK (auth.uid() = user_id OR public.is_admin());
+
 DROP POLICY IF EXISTS "Trades - read all authenticated" ON public.trades;
 CREATE POLICY "Trades - read all authenticated" ON public.trades FOR SELECT USING (auth.role() = 'authenticated');
 
@@ -566,6 +689,32 @@ CREATE POLICY "Holdings - read all authenticated" ON public.holdings FOR SELECT 
 -- ===================================================
 -- SEED DATA: ATIVOS E NPCs DA BOLSA
 -- ===================================================
+
+INSERT INTO public.conversations (id, title, is_group, is_general_chat)
+VALUES ('00000000-0000-0000-0000-000000000001', 'Chat Geral Belmont', TRUE, TRUE)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO public.welcome_content (id, title, content, rules)
+VALUES (
+  '00000000-0000-0000-0000-000000000002',
+  'Bem-vindo ao Belmont Core 2.0',
+  'Esta é a plataforma social privada e exclusiva da Mansão Belmont. Aqui reunimos inteligência, discussões estratégicas, projetos pessoais e comunicação em tempo real em um ambiente refinado.',
+  ARRAY[
+    'Mantenha a confidencialidade das discussões da Mansão.',
+    'Respeite a ordem visual e a etiqueta de comunicação.',
+    'Contribua com insights de valor nos tópicos e chats.'
+  ]
+)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO public.achievements (id, title, description, icon, category, rarity, xp_reward, coins_reward)
+VALUES
+  ('first_post', 'Primeiro Passo', 'Criou sua primeira publicação no Feed da Mansão.', 'Compass', 'social', 'common', 50, 25),
+  ('first_chat', 'Voz da Mansão', 'Enviou sua primeira mensagem no Chat Geral.', 'MessageSquare', 'community', 'common', 50, 25),
+  ('first_dm', 'Primeiro Contato', 'Enviou uma mensagem privada para outro membro.', 'Send', 'social', 'common', 50, 25),
+  ('chroncler', 'Cronista', 'Criou 10 publicações no Feed.', 'Feather', 'community', 'rare', 200, 100),
+  ('founder', 'Fundador da Mansão', 'Membro fundador presente na inauguração do Belmont Core 2.0.', 'Shield', 'special', 'legendary', 500, 250)
+ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.assets (id, symbol, name, description, current_price, change_24h, volume_24h)
 VALUES

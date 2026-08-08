@@ -1,0 +1,16 @@
+[Unit]
+Description=Belmont Core 2.0 — Market Engine Daemon Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/belmont-market-engine
+ExecStart=/usr/bin/node /var/www/belmont-market-engine/scripts/market-engine.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=DATABASE_URL=postgresql://postgres:E08059900pe%40@db.wlqorxvcrfpmvvhxgjiy.supabase.co:5432/postgres
+
+[Install]
+WantedBy=multi-user.target
