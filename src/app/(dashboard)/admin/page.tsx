@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   ShieldAlert,
   Megaphone,
@@ -18,22 +18,36 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Textarea } from '@/components/ui/Textarea'
 import { adminAdjustCoinsService, unlockAchievementService } from '@/lib/services/economy'
-import { MOCK_PROFILES } from '@/lib/services/data'
+import { getAllProfilesService } from '@/lib/services/data'
+import { Profile } from '@/types'
 
 export default function AdminPage() {
+  const [profiles, setProfiles] = useState<Profile[]>([])
   const [announcementTitle, setAnnouncementTitle] = useState('')
   const [announcementBody, setAnnouncementBody] = useState('')
 
   // Coin Adjustment Form State
-  const [selectedUserForCoins, setSelectedUserForCoins] = useState(MOCK_PROFILES[0].id)
+  const [selectedUserForCoins, setSelectedUserForCoins] = useState('')
   const [coinAmount, setCoinAmount] = useState<number>(100)
   const [coinReason, setCoinReason] = useState('')
 
   // Achievement Grant Form State
-  const [selectedUserForAch, setSelectedUserForAch] = useState(MOCK_PROFILES[0].id)
+  const [selectedUserForAch, setSelectedUserForAch] = useState('')
   const [selectedAchId, setSelectedAchId] = useState('founder')
 
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  useEffect(() => {
+    async function loadMembers() {
+      const data = await getAllProfilesService()
+      setProfiles(data)
+      if (data.length > 0) {
+        setSelectedUserForCoins(data[0].id)
+        setSelectedUserForAch(data[0].id)
+      }
+    }
+    loadMembers()
+  }, [])
 
   const handleCreateAnnouncement = (e: React.FormEvent) => {
     e.preventDefault()
@@ -47,8 +61,8 @@ export default function AdminPage() {
 
   const handleAdjustCoins = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!coinReason.trim()) {
-      setFeedbackMsg({ type: 'error', text: 'Justificativa obrigatória para ajustes de saldo.' })
+    if (!coinReason.trim() || !selectedUserForCoins) {
+      setFeedbackMsg({ type: 'error', text: 'Selecione um membro e insira a justificativa para o ajuste.' })
       return
     }
 
@@ -57,24 +71,24 @@ export default function AdminPage() {
       setFeedbackMsg({ type: 'success', text: `Ajuste administrativo de ${coinAmount} Coins realizado!` })
       setCoinReason('')
     } else {
-      setFeedbackMsg({ type: 'success', text: `Transação de ${coinAmount} Coins registrada no histórico administrativo!` })
-      setCoinReason('')
+      setFeedbackMsg({ type: 'error', text: 'Não foi possível registrar a transação econômica no Supabase.' })
     }
     setTimeout(() => setFeedbackMsg(null), 4000)
   }
 
   const handleGrantAchievement = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!selectedUserForAch) return
     await unlockAchievementService(selectedUserForAch, selectedAchId)
     setFeedbackMsg({ type: 'success', text: 'Conquista concedida com sucesso ao membro!' })
     setTimeout(() => setFeedbackMsg(null), 4000)
   }
 
   const metrics = [
-    { title: 'Membros Ativos', value: '42', icon: Users, color: 'text-rose-400' },
-    { title: 'Postagens no Feed', value: '158', icon: Compass, color: 'text-amber-400' },
-    { title: 'Mensagens no Chat', value: '1.240', icon: MessageSquare, color: 'text-emerald-400' },
-    { title: 'Comunicados', value: '8', icon: Megaphone, color: 'text-sky-400' },
+    { title: 'Membros Cadastrados', value: profiles.length.toString(), icon: Users, color: 'text-rose-400' },
+    { title: 'Publicações do Feed', value: '1', icon: Compass, color: 'text-amber-400' },
+    { title: 'Mensagens no Chat', value: '1', icon: MessageSquare, color: 'text-emerald-400' },
+    { title: 'Comunicados', value: '1', icon: Megaphone, color: 'text-sky-400' },
   ]
 
   return (
@@ -89,7 +103,7 @@ export default function AdminPage() {
             <Badge variant="gold">ACESSO PROTEGIDO</Badge>
           </div>
           <p className="text-xs text-belmont-text-muted mt-1">
-            Gestão econômica de Belmont Coins, atribuição manual de conquistas e transmissão de comunicados
+            Gestão econômica de Belmont Coins, atribuição de conquistas e transmissão de comunicados
           </p>
         </div>
       </div>
@@ -138,7 +152,7 @@ export default function AdminPage() {
               onChange={(e) => setSelectedUserForCoins(e.target.value)}
               className="w-full bg-belmont-surface/80 text-xs text-belmont-text-primary rounded-xl p-2.5 border border-belmont-border focus:outline-none"
             >
-              {MOCK_PROFILES.map((p) => (
+              {profiles.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.display_name} (@{p.username})
                 </option>
@@ -189,7 +203,7 @@ export default function AdminPage() {
               onChange={(e) => setSelectedUserForAch(e.target.value)}
               className="w-full bg-belmont-surface/80 text-xs text-belmont-text-primary rounded-xl p-2.5 border border-belmont-border focus:outline-none"
             >
-              {MOCK_PROFILES.map((p) => (
+              {profiles.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.display_name} (@{p.username})
                 </option>
@@ -228,7 +242,7 @@ export default function AdminPage() {
         <form onSubmit={handleCreateAnnouncement} className="space-y-4">
           <Input
             label="Título do Comunicado"
-            placeholder="Ex: Atualização do Sistema de Economia 2.0"
+            placeholder="Ex: Atualização da Mansão Belmont"
             value={announcementTitle}
             onChange={(e) => setAnnouncementTitle(e.target.value)}
             required

@@ -1,116 +1,174 @@
 'use client'
 
-import React, { useState } from 'react'
-import { Bell, Heart, MessageSquare, Megaphone, CheckCheck, Send } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { Bell, Heart, MessageSquare, Megaphone, CheckCircle2, Sparkles } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
+import { Skeleton } from '@/components/ui/Skeleton'
+import { EmptyState } from '@/components/ui/EmptyState'
 import { Button } from '@/components/ui/Button'
-import { Avatar } from '@/components/ui/Avatar'
-import { MOCK_PROFILES } from '@/lib/services/data'
+import { createClient } from '@/lib/supabase/client'
+import { Notification } from '@/types'
 
 export default function NotificationsPage() {
-  const [notifications, setNotifications] = useState([
-    {
-      id: 'notif-1',
-      actor: MOCK_PROFILES[1],
-      type: 'like',
-      category: 'Curtidas',
-      content: 'curtiu a sua publicação no Feed da Mansão.',
-      time: 'Há 20 minutos',
-      is_read: false,
-    },
-    {
-      id: 'notif-2',
-      actor: MOCK_PROFILES[2],
-      type: 'comment',
-      category: 'Comentários',
-      content: 'comentou no seu tópico sobre arquitetura.',
-      time: 'Há 2 horas',
-      is_read: false,
-    },
-    {
-      id: 'notif-3',
-      actor: MOCK_PROFILES[0],
-      type: 'announcement',
-      category: 'Comunicados',
-      content: 'publicou um novo comunicado oficial da Mansão.',
-      time: 'Há 1 dia',
-      is_read: true,
-    },
-  ])
+  const supabase = createClient()
+  const [notifications, setNotifications] = useState<Notification[]>([])
+  const [filter, setFilter] = useState<'all' | 'unread'>('all')
+  const [isLoading, setIsLoading] = useState(true)
 
-  const markAllRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })))
+  const fetchNotifications = async () => {
+    setIsLoading(true)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        setNotifications([])
+        return
+      }
+
+      const { data, error } = await (supabase
+        .from('notifications') as any)
+        .select('*, actor:profiles(*)')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+
+      if (error || !data) {
+        setNotifications([])
+      } else {
+        setNotifications(data as Notification[])
+      }
+    } catch (e) {
+      setNotifications([])
+    } finally {
+      setIsLoading(false)
+    }
   }
+
+  useEffect(() => {
+    fetchNotifications()
+  }, [])
+
+  const markAllAsRead = async () => {
+    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })))
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) {
+      await (supabase.from('notifications') as any)
+        .update({ is_read: true })
+        .eq('user_id', user.id)
+    }
+  }
+
+  const filteredNotifications = notifications.filter((n) => {
+    if (filter === 'unread') return !n.is_read
+    return true
+  })
 
   const getIcon = (type: string) => {
     switch (type) {
       case 'like':
-        return <Heart className="w-3.5 h-3.5 text-belmont-rose" />
+        return <Heart className="w-4 h-4 text-rose-400" />
       case 'comment':
-        return <MessageSquare className="w-3.5 h-3.5 text-amber-400" />
-      case 'message':
-        return <Send className="w-3.5 h-3.5 text-sky-400" />
+        return <MessageSquare className="w-4 h-4 text-sky-400" />
+      case 'announcement':
+        return <Megaphone className="w-4 h-4 text-amber-400" />
       default:
-        return <Megaphone className="w-3.5 h-3.5 text-emerald-400" />
+        return <Sparkles className="w-4 h-4 text-belmont-rose" />
     }
   }
 
   return (
     <div className="max-w-3xl mx-auto space-y-6 animate-fadeIn pb-12">
-      <div className="flex items-center justify-between">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold font-display tracking-tight text-belmont-text-primary flex items-center gap-2.5">
             <Bell className="w-6 h-6 text-belmont-rose" />
             Central de Notificações
           </h1>
           <p className="text-xs text-belmont-text-muted mt-1">
-            Interações, respostas e avisos oficiais da Mansão Belmont
+            Histórico oficial de alertas, menções e interações
           </p>
         </div>
 
-        <Button
-          onClick={markAllRead}
-          variant="ghost"
-          size="sm"
-          leftIcon={<CheckCheck className="w-3.5 h-3.5" />}
-        >
-          Marcar lidas
-        </Button>
-      </div>
-
-      <div className="glass-panel rounded-3xl border border-belmont-border overflow-hidden divide-y divide-belmont-border/50">
-        {notifications.map((item) => (
-          <div
-            key={item.id}
-            className={`p-4 flex items-center justify-between transition-colors ${
-              !item.is_read ? 'bg-belmont-rose/5' : 'hover:bg-white/5'
-            }`}
+        {notifications.some((n) => !n.is_read) && (
+          <Button
+            onClick={markAllAsRead}
+            variant="ghost"
+            size="sm"
+            leftIcon={<CheckCircle2 className="w-4 h-4" />}
           >
-            <div className="flex items-center gap-3.5">
-              <div className="relative">
-                <Avatar src={item.actor.avatar_url} fallback={item.actor.display_name} size="md" />
-                <div className="absolute -bottom-1 -right-1 p-1 rounded-full bg-belmont-surface border border-belmont-border">
-                  {getIcon(item.type)}
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center gap-2">
-                  <p className="text-xs text-belmont-text-primary">
-                    <span className="font-bold">{item.actor.display_name}</span> {item.content}
-                  </p>
-                  <Badge variant="outline" size="sm">{item.category}</Badge>
-                </div>
-                <p className="text-[10px] text-belmont-text-muted mt-0.5">{item.time}</p>
-              </div>
-            </div>
-
-            {!item.is_read && (
-              <span className="w-2 h-2 rounded-full bg-belmont-rose shrink-0" />
-            )}
-          </div>
-        ))}
+            Marcar todas como lidas
+          </Button>
+        )}
       </div>
+
+      {/* Filter Tabs */}
+      <div className="glass-panel p-2 rounded-2xl border border-belmont-border flex items-center gap-2 text-xs">
+        <button
+          onClick={() => setFilter('all')}
+          className={`px-4 py-1.5 rounded-xl font-semibold transition-all ${
+            filter === 'all'
+              ? 'bg-belmont-crimson text-white shadow-sm'
+              : 'text-belmont-text-muted hover:text-belmont-text-primary'
+          }`}
+        >
+          Todas ({notifications.length})
+        </button>
+        <button
+          onClick={() => setFilter('unread')}
+          className={`px-4 py-1.5 rounded-xl font-semibold transition-all ${
+            filter === 'unread'
+              ? 'bg-belmont-crimson text-white shadow-sm'
+              : 'text-belmont-text-muted hover:text-belmont-text-primary'
+          }`}
+        >
+          Não Lidas ({notifications.filter((n) => !n.is_read).length})
+        </button>
+      </div>
+
+      {/* Notifications List */}
+      {isLoading ? (
+        <div className="space-y-3">
+          <Skeleton className="h-16 w-full rounded-2xl" />
+          <Skeleton className="h-16 w-full rounded-2xl" />
+        </div>
+      ) : filteredNotifications.length === 0 ? (
+        <EmptyState
+          icon={<Bell className="w-6 h-6 text-belmont-rose" />}
+          title="Tudo tranquilo."
+          description="Você não possui novas notificações no momento."
+        />
+      ) : (
+        <div className="space-y-2.5">
+          {filteredNotifications.map((notif) => (
+            <div
+              key={notif.id}
+              className={`p-4 rounded-2xl border flex items-center justify-between transition-colors ${
+                notif.is_read
+                  ? 'bg-belmont-surface/50 border-belmont-border/60'
+                  : 'bg-belmont-surface/90 border-belmont-rose/30 shadow-sm'
+              }`}
+            >
+              <div className="flex items-center gap-3.5">
+                <div className="w-9 h-9 rounded-xl bg-belmont-surface-elevated border border-belmont-border flex items-center justify-center">
+                  {getIcon(notif.type)}
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-belmont-text-primary">{notif.content}</p>
+                  <p className="text-[10px] text-belmont-text-muted mt-0.5">
+                    {new Date(notif.created_at).toLocaleDateString('pt-BR', {
+                      day: '2-digit',
+                      month: 'short',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </p>
+                </div>
+              </div>
+
+              {!notif.is_read && <Badge variant="crimson" size="sm">NOVO</Badge>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

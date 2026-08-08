@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { Compass, RefreshCw } from 'lucide-react'
+import { Compass, RefreshCw, Feather } from 'lucide-react'
 import { CreatePostBox } from '@/components/feed/CreatePostBox'
 import { PostCard } from '@/components/feed/PostCard'
 import { Skeleton } from '@/components/ui/Skeleton'
@@ -22,8 +22,8 @@ export default function FeedPage() {
     try {
       const data = await getPostsService()
       setPosts(data)
-    } catch (err: any) {
-      setError('Falha ao carregar as postagens do Feed.')
+    } catch (err) {
+      setError('Não foi possível carregar as publicações do Feed.')
     } finally {
       setIsLoading(false)
     }
@@ -47,7 +47,7 @@ export default function FeedPage() {
             Feed da Mansão
           </h1>
           <p className="text-xs text-belmont-text-muted mt-1">
-            Linha do tempo de publicações e discussões exclusivas do Belmont Core
+            Linha do tempo de publicações reais dos membros do Belmont Core
           </p>
         </div>
 
@@ -77,11 +77,12 @@ export default function FeedPage() {
         <ErrorState message={error} onRetry={fetchPosts} />
       )}
 
-      {/* Empty State */}
+      {/* Belmont Empty State */}
       {!isLoading && !error && posts.length === 0 && (
         <EmptyState
-          title="Nenhuma publicação encontrada"
-          description="Seja o primeiro membro a publicar uma ideia ou atualização no feed."
+          icon={<Feather className="w-6 h-6 text-belmont-rose" />}
+          title="A Mansão ainda está silenciosa."
+          description="Seja o primeiro a deixar um registro no Feed do Belmont Core."
         />
       )}
 

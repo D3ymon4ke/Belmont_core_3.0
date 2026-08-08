@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useRef } from 'react'
-import { MessageSquare, RefreshCcw, ShieldCheck, Users } from 'lucide-react'
+import { MessageSquare, RefreshCcw, ShieldCheck, VolumeX } from 'lucide-react'
 import { MessageBubble } from '@/components/chat/MessageBubble'
 import { ChatInput } from '@/components/chat/ChatInput'
 import { Skeleton } from '@/components/ui/Skeleton'
@@ -33,14 +33,12 @@ export default function GeneralChatPage() {
   }
 
   useEffect(() => {
-    // Fetch Current User Auth ID
     supabase.auth.getUser().then(({ data }) => {
       if (data.user) setCurrentUserId(data.user.id)
     })
 
     fetchMessages()
 
-    // Controlled Polling every 4 seconds
     const interval = setInterval(() => {
       if (document.hasFocus()) {
         fetchMessages()
@@ -74,7 +72,7 @@ export default function GeneralChatPage() {
               <h1 className="text-base font-bold font-display text-belmont-text-primary">
                 Chat Geral Belmont
               </h1>
-              <Badge variant="crimson" size="sm">MENSAGENS PERSISTIDAS</Badge>
+              <Badge variant="crimson" size="sm">SALA DE CONVIVÊNCIA</Badge>
             </div>
             <p className="text-[11px] text-belmont-text-muted flex items-center gap-1">
               <ShieldCheck className="w-3 h-3 text-emerald-400" />
@@ -102,15 +100,16 @@ export default function GeneralChatPage() {
           </div>
         ) : messages.length === 0 ? (
           <EmptyState
-            title="Nenhuma mensagem ainda"
-            description="Inicie a conversa no Chat Geral da Mansão Belmont."
+            icon={<VolumeX className="w-6 h-6 text-belmont-rose" />}
+            title="A sala está silenciosa."
+            description="Envie a primeira mensagem no Chat Geral da Mansão Belmont."
           />
         ) : (
           messages.map((msg) => (
             <MessageBubble
               key={msg.id}
               message={msg}
-              isCurrentUser={msg.sender_id === currentUserId || msg.sender_id === 'user-1'}
+              isCurrentUser={msg.sender_id === currentUserId}
             />
           ))
         )}

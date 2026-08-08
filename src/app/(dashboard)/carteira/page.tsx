@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { Coins, ArrowDownLeft, ArrowUpRight, ShieldCheck, History, Filter } from 'lucide-react'
+import { Coins, ArrowDownLeft, ArrowUpRight, ShieldCheck, History } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -11,7 +11,7 @@ import { CoinTransaction } from '@/types'
 
 export default function WalletPage() {
   const supabase = createClient()
-  const [balance, setBalance] = useState<number>(100)
+  const [balance, setBalance] = useState<number>(0)
   const [transactions, setTransactions] = useState<CoinTransaction[]>([])
   const [filterType, setFilterType] = useState<'all' | 'in' | 'out' | 'admin'>('all')
   const [isLoading, setIsLoading] = useState(true)
@@ -25,7 +25,7 @@ export default function WalletPage() {
           .select('belmont_coins')
           .eq('id', user.id)
           .single()
-        if (profile) setBalance(profile.belmont_coins || 100)
+        if (profile) setBalance(profile.belmont_coins ?? 0)
       }
 
       const txs = await getTransactionsService()
@@ -129,8 +129,9 @@ export default function WalletPage() {
           </div>
         ) : filteredTransactions.length === 0 ? (
           <EmptyState
-            title="Nenhuma transação encontrada"
-            description="Não há registros no histórico para o filtro selecionado."
+            icon={<Coins className="w-6 h-6 text-amber-400" />}
+            title="Nenhuma movimentação registrada."
+            description="Suas recompensas e ajustes econômicos aparecerão aqui."
           />
         ) : (
           <div className="space-y-2.5">

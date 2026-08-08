@@ -5,15 +5,12 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import {
   Calendar,
-  Award,
   Coins,
   Edit3,
   Sparkles,
   Compass,
   CheckCircle2,
-  Shield,
   Star,
-  Wallet,
   TrendingUp,
   Award as AwardIcon,
 } from 'lucide-react'
@@ -25,10 +22,11 @@ import { Input } from '@/components/ui/Input'
 import { Textarea } from '@/components/ui/Textarea'
 import { PostCard } from '@/components/feed/PostCard'
 import { Skeleton } from '@/components/ui/Skeleton'
+import { EmptyState } from '@/components/ui/EmptyState'
 import {
   getProfileByUsernameService,
   updateProfileService,
-  MOCK_POSTS,
+  getPostsService,
 } from '@/lib/services/data'
 import {
   getUserProgressService,
@@ -37,18 +35,19 @@ import {
   getRankProgress,
 } from '@/lib/services/economy'
 import { createClient } from '@/lib/supabase/client'
-import { Profile, UserProgress, UserAchievement, Achievement } from '@/types'
+import { Profile, UserAchievement, Achievement, Post } from '@/types'
 
 export default function UserProfilePage() {
   const params = useParams()
   const supabase = createClient()
-  const usernameParam = Array.isArray(params?.username) ? params.username[0] : params?.username || 'lord_belmont'
+  const usernameParam = Array.isArray(params?.username) ? params.username[0] : params?.username || ''
 
   const [profile, setProfile] = useState<Profile | null>(null)
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
-  const [userXP, setUserXP] = useState<number>(1840)
+  const [userXP, setUserXP] = useState<number>(0)
   const [userAchievements, setUserAchievements] = useState<UserAchievement[]>([])
   const [allAchievements, setAllAchievements] = useState<Achievement[]>([])
+  const [userPosts, setUserPosts] = useState<Post[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
   const [isEditOpen, setIsEditOpen] = useState(false)
@@ -72,10 +71,13 @@ export default function UserProfilePage() {
         setEditStatusText(fetchedProfile.status_text || '')
 
         const progress = await getUserProgressService(fetchedProfile.id)
-        setUserXP(progress.xp || 1840)
+        setUserXP(progress.xp || 0)
 
         const uAchs = await getUserAchievementsService(fetchedProfile.id)
         setUserAchievements(uAchs)
+
+        const posts = await getPostsService()
+        setUserPosts(posts.filter((p) => p.author_id === fetchedProfile.id))
       }
 
       const catalogue = await getAchievementsService()
@@ -84,7 +86,7 @@ export default function UserProfilePage() {
       setIsLoading(false)
     }
 
-    loadData()
+    if (usernameParam) loadData()
   }, [usernameParam])
 
   const isOwner = currentUserId && profile && currentUserId === profile.id
@@ -123,12 +125,12 @@ export default function UserProfilePage() {
 
   if (!profile) {
     return (
-      <div className="max-w-4xl mx-auto text-center py-12">
+      <div className="max-w-4xl mx-auto text-center py-16 space-y-3">
         <h2 className="text-xl font-bold font-display text-belmont-text-primary">
-          Perfil não encontrado
+          Membro não encontrado
         </h2>
-        <p className="text-xs text-belmont-text-muted mt-1">
-          O membro @{usernameParam} não foi encontrado na Mansão Belmont.
+        <p className="text-xs text-belmont-text-muted">
+          O perfil @{usernameParam} não foi localizado no Supabase da Mansão Belmont.
         </p>
       </div>
     )
@@ -150,7 +152,7 @@ export default function UserProfilePage() {
             <Link href="/carteira">
               <Badge variant="gold" size="md" className="cursor-pointer hover:scale-105 transition-transform">
                 <Coins className="w-3.5 h-3.5 mr-1" />
-                {profile.belmont_coins} Coins
+                {profile.belmont_coins ?? 0} Coins
               </Badge>
             </Link>
           </div>
@@ -164,7 +166,6 @@ export default function UserProfilePage() {
                 src={profile.avatar_url}
                 fallback={profile.display_name}
                 size="xl"
-                status="online"
                 className="ring-4 ring-belmont-bg"
               />
             </div>
@@ -202,7 +203,7 @@ export default function UserProfilePage() {
             )}
 
             <p className="text-sm text-belmont-text-secondary leading-relaxed max-w-2xl">
-              {profile.bio || 'Membro exclusivo da Mansão Belmont.'}
+              {profile.bio || 'Membro da Mansão Belmont.'}
             </p>
 
             <div className="flex items-center gap-4 text-xs text-belmont-text-muted pt-2">
@@ -244,34 +245,44 @@ export default function UserProfilePage() {
             <AwardIcon className="w-4 h-4 text-amber-400" />
             Galeria de Conquistas ({userAchievements.length} Desbloqueadas)
           </h3>
-          <button
-            onClick={() => setIsAchievementsModalOpen(true)}
-            className="text-xs text-belmont-rose hover:underline font-semibold"
-          >
-            Ver Todas ({allAchievements.length}) →
-          </button>
+          {allAchievements.length > 0 && (
+            <button
+              onClick={() => setIsAchievementsModalOpen(true)}
+              className="text-xs text-belmont-rose hover:underline font-semibold"
+            >
+              Ver Todas ({allAchievements.length}) →
+            </button>
+          )}
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {userAchievements.map((ua) => (
-            <div
-              key={ua.id}
-              className="p-3.5 rounded-xl bg-belmont-surface/60 border border-belmont-border flex items-center gap-3"
-            >
-              <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
-                <Star className="w-4 h-4" />
+        {userAchievements.length === 0 ? (
+          <EmptyState
+            icon={<AwardIcon className="w-6 h-6 text-amber-400" />}
+            title="Você ainda não desbloqueou nenhuma conquista."
+            description="Participe das atividades da Mansão Belmont para conquistar insígnias."
+          />
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {userAchievements.map((ua) => (
+              <div
+                key={ua.id}
+                className="p-3.5 rounded-xl bg-belmont-surface/60 border border-belmont-border flex items-center gap-3"
+              >
+                <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
+                  <Star className="w-4 h-4" />
+                </div>
+                <div className="truncate">
+                  <p className="text-xs font-bold text-belmont-text-primary truncate">
+                    {ua.achievement?.title || 'Conquista'}
+                  </p>
+                  <p className="text-[10px] text-belmont-text-muted truncate">
+                    +{ua.achievement?.xp_reward} XP • +{ua.achievement?.coins_reward} Coins
+                  </p>
+                </div>
               </div>
-              <div className="truncate">
-                <p className="text-xs font-bold text-belmont-text-primary truncate">
-                  {ua.achievement?.title || 'Conquista'}
-                </p>
-                <p className="text-[10px] text-belmont-text-muted truncate">
-                  +{ua.achievement?.xp_reward} XP • +{ua.achievement?.coins_reward} Coins
-                </p>
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* User Posts Section */}
@@ -281,11 +292,18 @@ export default function UserProfilePage() {
           Publicações de {profile.display_name}
         </h3>
 
-        <div className="space-y-4">
-          {MOCK_POSTS.map((post) => (
-            <PostCard key={post.id} post={{ ...post, author: profile }} />
-          ))}
-        </div>
+        {userPosts.length === 0 ? (
+          <EmptyState
+            title="Nenhuma publicação criada ainda."
+            description="Este membro ainda não publicou nada no Feed da Mansão."
+          />
+        ) : (
+          <div className="space-y-4">
+            {userPosts.map((post) => (
+              <PostCard key={post.id} post={{ ...post, author: profile }} />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Edit Profile Modal */}

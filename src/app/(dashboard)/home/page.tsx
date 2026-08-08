@@ -1,8 +1,6 @@
 import React from 'react'
 import Link from 'next/link'
 import {
-  Sparkles,
-  MessageSquare,
   Compass,
   ArrowRight,
   ShieldCheck,
@@ -10,22 +8,22 @@ import {
   Coins,
   Megaphone,
   Clock,
-  Wallet,
   TrendingUp,
+  Users,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
 import { Avatar } from '@/components/ui/Avatar'
 import { Badge } from '@/components/ui/Badge'
-import { MOCK_PROFILES, MOCK_ANNOUNCEMENTS, MOCK_POSTS } from '@/lib/services/data'
-import { getRankProgress } from '@/lib/services/economy'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { Button } from '@/components/ui/Button'
+import { getPostsService, getAnnouncementsService, getAllProfilesService } from '@/lib/services/data'
+import { getUserProgressService, getRankProgress } from '@/lib/services/economy'
 import { Profile } from '@/types'
 
 export default async function HomePage() {
   const supabase = await createClient()
-  let userDisplayName = 'Membro Belmont'
-  let userRank = 'Iniciado'
-  let userCoins = 100
-  let userXP = 1840
+  let currentProfile: Profile | null = null
+  let userXP = 0
 
   try {
     const { data: { user } } = await supabase.auth.getUser()
@@ -36,12 +34,7 @@ export default async function HomePage() {
         .eq('id', user.id)
         .single()
       
-      const profile = rawProfile as Profile | null
-      if (profile) {
-        userDisplayName = profile.display_name
-        userRank = profile.rank_title || 'Iniciado'
-        userCoins = profile.belmont_coins || 100
-      }
+      if (rawProfile) currentProfile = rawProfile as Profile
 
       const { data: progress } = await (supabase.from('user_progress') as any)
         .select('xp')
@@ -50,8 +43,12 @@ export default async function HomePage() {
       if (progress) userXP = progress.xp || 0
     }
   } catch (e) {
-    // Fallback
+    // Graceful error fallback
   }
+
+  const userDisplayName = currentProfile?.display_name || 'Membro Belmont'
+  const userRank = currentProfile?.rank_title || 'Iniciado'
+  const userCoins = currentProfile?.belmont_coins ?? 0
 
   const rankData = getRankProgress(userXP)
 
@@ -60,9 +57,13 @@ export default async function HomePage() {
   if (currentHour >= 5 && currentHour < 12) timeGreeting = 'Bom dia'
   else if (currentHour >= 12 && currentHour < 18) timeGreeting = 'Boa tarde'
 
-  const latestAnnouncement = MOCK_ANNOUNCEMENTS[0]
-  const recentPosts = MOCK_POSTS.slice(0, 2)
-  const activeMembers = MOCK_PROFILES
+  const announcements = await getAnnouncementsService()
+  const latestAnnouncement = announcements[0] || null
+
+  const allPosts = await getPostsService()
+  const recentPosts = allPosts.slice(0, 2)
+
+  const mansionMembers = await getAllProfilesService()
 
   return (
     <div className="space-y-8 animate-fadeIn">
@@ -74,7 +75,7 @@ export default async function HomePage() {
           <div className="space-y-3 max-w-xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-belmont-rose/10 border border-belmont-rose/20 text-xs font-semibold text-rose-300">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Sessão Protegida • Mansão Belmont em ordem</span>
+              <span>Sessão Protegida • Mansão Belmont</span>
             </div>
             
             <h1 className="text-2xl sm:text-3xl font-extrabold font-display tracking-tight text-belmont-text-primary">
@@ -82,7 +83,7 @@ export default async function HomePage() {
             </h1>
             
             <p className="text-xs sm:text-sm text-belmont-text-secondary leading-relaxed">
-              Este é o Centro de Comando da sua plataforma social privada. Acompanhe os últimos comunicados da Mansão, interaja no chat geral e acesse conteúdos exclusivos.
+              Centro de Comando do Belmont Core. Acompanhe os comunicados da Mansão, interaja com os membros e gerencie sua conta.
             </p>
           </div>
 
@@ -126,7 +127,6 @@ export default async function HomePage() {
           </span>
         </div>
 
-        {/* Progress Bar Container */}
         <div className="w-full h-2.5 bg-belmont-surface-elevated rounded-full overflow-hidden border border-belmont-border/50 p-0.5">
           <div
             className="h-full bg-gradient-to-r from-belmont-crimson to-amber-400 rounded-full transition-all duration-500 shadow-gold-glow"
@@ -135,12 +135,12 @@ export default async function HomePage() {
         </div>
       </div>
 
-      {/* Main Grid: Announcements & Shortcuts */}
+      {/* Main Grid: Announcements & Members */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left 2-Column: Announcement & Feed Highlights */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Featured Announcement Card */}
-          {latestAnnouncement && (
+          {/* Announcement Section */}
+          {latestAnnouncement ? (
             <div className="glass-panel rounded-2xl p-6 border border-belmont-border hover:border-belmont-rose/40 transition-colors space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -165,12 +165,18 @@ export default async function HomePage() {
               <div className="flex items-center justify-between text-xs text-belmont-text-muted pt-3 border-t border-belmont-border">
                 <span className="flex items-center gap-1.5">
                   <Clock className="w-3.5 h-3.5" />
-                  Transmitido recentemente
+                  {new Date(latestAnnouncement.created_at).toLocaleDateString('pt-BR')}
                 </span>
                 <Link href="/boas-vindas" className="text-belmont-rose hover:underline font-semibold inline-flex items-center gap-1">
-                  Ver Arquivos da Mansão <ArrowRight className="w-3.5 h-3.5" />
+                  Ver Boas-Vindas <ArrowRight className="w-3.5 h-3.5" />
                 </Link>
               </div>
+            </div>
+          ) : (
+            <div className="glass-panel rounded-2xl p-6 border border-belmont-border text-center py-6">
+              <Megaphone className="w-8 h-8 text-belmont-text-muted mx-auto mb-2 opacity-50" />
+              <p className="text-xs font-semibold text-belmont-text-primary">Nenhum comunicado no momento.</p>
+              <p className="text-[10px] text-belmont-text-muted mt-0.5">Os avisos oficiais da Mansão aparecerão aqui.</p>
             </div>
           )}
 
@@ -182,81 +188,72 @@ export default async function HomePage() {
                 Atividade Recente no Feed
               </h3>
               <Link href="/feed" className="text-xs text-belmont-rose hover:underline font-semibold">
-                Feed Completo →
+                Ir para o Feed →
               </Link>
             </div>
 
-            <div className="space-y-3">
-              {recentPosts.map((post) => (
-                <div key={post.id} className="p-4 rounded-xl bg-belmont-surface/50 border border-belmont-border/60 hover:bg-belmont-surface-hover transition-colors">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2.5">
-                      <Avatar src={post.author?.avatar_url} fallback={post.author?.display_name} size="sm" />
-                      <div>
-                        <p className="text-xs font-bold text-belmont-text-primary">{post.author?.display_name}</p>
-                        <p className="text-[10px] text-belmont-text-muted">@{post.author?.username}</p>
+            {recentPosts.length === 0 ? (
+              <div className="text-center py-6 space-y-3">
+                <p className="text-xs font-semibold text-belmont-text-secondary">Ainda não há publicações na Mansão.</p>
+                <Link href="/feed">
+                  <Button size="sm" variant="secondary">Ir para o Feed</Button>
+                </Link>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {recentPosts.map((post) => (
+                  <div key={post.id} className="p-4 rounded-xl bg-belmont-surface/50 border border-belmont-border/60 hover:bg-belmont-surface-hover transition-colors">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2.5">
+                        <Avatar src={post.author?.avatar_url} fallback={post.author?.display_name} size="sm" />
+                        <div>
+                          <p className="text-xs font-bold text-belmont-text-primary">{post.author?.display_name}</p>
+                          <p className="text-[10px] text-belmont-text-muted">@{post.author?.username}</p>
+                        </div>
                       </div>
+                      <Badge variant="outline">{post.likes_count} Curtidas</Badge>
                     </div>
-                    <Badge variant="outline">{post.likes_count} Curtidas</Badge>
+                    <p className="text-xs text-belmont-text-secondary line-clamp-2">{post.content}</p>
                   </div>
-                  <p className="text-xs text-belmont-text-secondary line-clamp-2">{post.content}</p>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Right Sidebar: Shortcuts & Members */}
+        {/* Right Sidebar: Mansion Members */}
         <div className="space-y-6">
-          {/* Quick Shortcuts */}
-          <div className="glass-panel rounded-2xl p-5 border border-belmont-border space-y-3">
-            <h3 className="text-xs font-bold text-belmont-text-primary font-display uppercase tracking-wider text-belmont-text-muted">
-              Atalhos de Acesso
-            </h3>
-            <div className="grid grid-cols-2 gap-2.5">
-              <Link
-                href="/chat"
-                className="flex flex-col items-start p-3.5 rounded-xl bg-belmont-surface/70 border border-belmont-border hover:border-belmont-rose/40 hover:bg-white/5 transition-all group"
-              >
-                <MessageSquare className="w-5 h-5 text-belmont-rose mb-2 group-hover:scale-110 transition-transform" />
-                <span className="text-xs font-bold text-belmont-text-primary">Chat Geral</span>
-                <span className="text-[10px] text-belmont-text-muted mt-0.5">Sala de convivência</span>
-              </Link>
-
-              <Link
-                href="/carteira"
-                className="flex flex-col items-start p-3.5 rounded-xl bg-belmont-surface/70 border border-belmont-border hover:border-amber-500/40 hover:bg-white/5 transition-all group"
-              >
-                <Wallet className="w-5 h-5 text-amber-400 mb-2 group-hover:scale-110 transition-transform" />
-                <span className="text-xs font-bold text-belmont-text-primary">Carteira</span>
-                <span className="text-[10px] text-belmont-text-muted mt-0.5">Ver extrato</span>
-              </Link>
-            </div>
-          </div>
-
-          {/* Active Members */}
+          {/* Registered Mansion Members List */}
           <div className="glass-panel rounded-2xl p-5 border border-belmont-border space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-belmont-text-primary font-display uppercase tracking-wider text-belmont-text-muted">
-                Membros Presentes
+              <h3 className="text-xs font-bold text-belmont-text-primary font-display uppercase tracking-wider text-belmont-text-muted flex items-center gap-2">
+                <Users className="w-4 h-4 text-belmont-rose" />
+                Membros da Mansão ({mansionMembers.length})
               </h3>
-              <Badge variant="success" size="sm">ONLINE</Badge>
             </div>
 
-            <div className="space-y-3">
-              {activeMembers.map((member) => (
-                <div key={member.id} className="flex items-center justify-between p-2 rounded-xl hover:bg-white/5 transition-colors">
-                  <div className="flex items-center gap-3 overflow-hidden">
-                    <Avatar src={member.avatar_url} fallback={member.display_name} size="sm" status="online" />
-                    <div className="truncate">
-                      <p className="text-xs font-bold text-belmont-text-primary truncate">{member.display_name}</p>
-                      <p className="text-[10px] text-belmont-text-muted truncate">{member.status_text}</p>
+            {mansionMembers.length === 0 ? (
+              <p className="text-xs text-belmont-text-muted text-center py-4">Nenhum outro membro cadastrado.</p>
+            ) : (
+              <div className="space-y-3">
+                {mansionMembers.map((member) => (
+                  <Link
+                    key={member.id}
+                    href={`/perfil/${member.username}`}
+                    className="flex items-center justify-between p-2 rounded-xl hover:bg-white/5 transition-colors"
+                  >
+                    <div className="flex items-center gap-3 overflow-hidden">
+                      <Avatar src={member.avatar_url} fallback={member.display_name} size="sm" />
+                      <div className="truncate">
+                        <p className="text-xs font-bold text-belmont-text-primary truncate">{member.display_name}</p>
+                        <p className="text-[10px] text-belmont-text-muted truncate">@{member.username}</p>
+                      </div>
                     </div>
-                  </div>
-                  {member.is_admin && <Badge variant="crimson" size="sm">ADMIN</Badge>}
-                </div>
-              ))}
-            </div>
+                    {member.is_admin && <Badge variant="crimson" size="sm">ADMIN</Badge>}
+                  </Link>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>

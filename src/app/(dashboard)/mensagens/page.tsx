@@ -1,42 +1,58 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { Send, Search, MessageSquare, ArrowLeft } from 'lucide-react'
+import { Send, Search, ArrowLeft, MessageSquareDashed } from 'lucide-react'
 import { Avatar } from '@/components/ui/Avatar'
 import { Badge } from '@/components/ui/Badge'
-import { Input } from '@/components/ui/Input'
+import { EmptyState } from '@/components/ui/EmptyState'
 import { MessageBubble } from '@/components/chat/MessageBubble'
 import { ChatInput } from '@/components/chat/ChatInput'
-import { searchProfilesService, MOCK_PROFILES, MOCK_MESSAGES } from '@/lib/services/data'
+import { Skeleton } from '@/components/ui/Skeleton'
+import { searchProfilesService, getAllProfilesService } from '@/lib/services/data'
+import { createClient } from '@/lib/supabase/client'
 import { Profile, Message } from '@/types'
 
-export default function PrivateMessagesPage() {
-  const [conversationsList, setConversationsList] = useState<Profile[]>(MOCK_PROFILES.slice(1))
-  const [selectedUser, setSelectedUser] = useState<Profile | null>(MOCK_PROFILES[1] || null)
-  const [messages, setMessages] = useState<Message[]>(MOCK_MESSAGES)
+export default function DirectMessagesPage() {
+  const supabase = createClient()
+  const [profiles, setProfiles] = useState<Profile[]>([])
+  const [selectedProfile, setSelectedProfile] = useState<Profile | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
-  const [isSearching, setIsSearching] = useState(false)
+  const [messages, setMessages] = useState<Message[]>([])
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    if (!searchQuery.trim()) return
+    supabase.auth.getUser().then(({ data }) => {
+      if (data.user) setCurrentUserId(data.user.id)
+    })
 
-    const timer = setTimeout(async () => {
-      setIsSearching(true)
-      const results = await searchProfilesService(searchQuery.trim())
-      if (results.length > 0) {
-        setConversationsList(results)
-      }
-      setIsSearching(false)
-    }, 300)
+    async function loadMembers() {
+      setIsLoading(true)
+      const data = await getAllProfilesService()
+      setProfiles(data)
+      setIsLoading(false)
+    }
 
-    return () => clearTimeout(timer)
-  }, [searchQuery])
+    loadMembers()
+  }, [])
 
-  const handleSendMessage = async (content: string) => {
+  const handleSearch = async (query: string) => {
+    setSearchQuery(query)
+    if (!query.trim()) {
+      const data = await getAllProfilesService()
+      setProfiles(data)
+      return
+    }
+    const filtered = await searchProfilesService(query)
+    setProfiles(filtered)
+  }
+
+  const handleSendMessage = (content: string) => {
+    if (!selectedProfile || !currentUserId) return
     const newMsg: Message = {
       id: `dm-${Date.now()}`,
-      conversation_id: `conv-${selectedUser?.id}`,
-      sender_id: 'user-1',
+      conversation_id: `conv-${selectedProfile.id}`,
+      sender_id: currentUserId,
       content,
       media_url: null,
       created_at: new Date().toISOString(),
@@ -45,55 +61,68 @@ export default function PrivateMessagesPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] max-w-5xl mx-auto glass-panel rounded-3xl border border-belmont-border overflow-hidden animate-fadeIn pb-[env(safe-area-inset-bottom)]">
-      {/* Conversations List Sidebar Pane */}
+    <div className="h-[calc(100vh-8rem)] max-w-5xl mx-auto glass-panel rounded-3xl border border-belmont-border overflow-hidden flex flex-col md:flex-row animate-fadeIn">
+      {/* Members List Panel */}
       <div
-        className={`w-full md:w-80 bg-belmont-surface/90 border-r border-belmont-border flex flex-col ${
-          selectedUser ? 'hidden md:flex' : 'flex'
+        className={`w-full md:w-80 border-r border-belmont-border flex flex-col bg-belmont-surface/70 ${
+          selectedProfile ? 'hidden md:flex' : 'flex'
         }`}
       >
+        {/* Search Header */}
         <div className="p-4 border-b border-belmont-border space-y-3">
-          <h2 className="text-base font-bold font-display text-belmont-text-primary flex items-center gap-2">
-            <Send className="w-4 h-4 text-belmont-rose" />
-            Mensagens Privadas
-          </h2>
-          <Input
-            placeholder="Buscar membros da Mansão..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            leftIcon={<Search className="w-3.5 h-3.5" />}
-            className="bg-belmont-bg/60 text-xs py-1.5"
-          />
+          <div className="flex items-center gap-2">
+            <Send className="w-5 h-5 text-belmont-rose" />
+            <h1 className="text-base font-bold font-display text-belmont-text-primary">
+              Mensagens Privadas
+            </h1>
+          </div>
+
+          <div className="relative">
+            <Search className="w-4 h-4 text-belmont-text-muted absolute left-3 top-3" />
+            <input
+              type="text"
+              placeholder="Buscar membro da Mansão..."
+              value={searchQuery}
+              onChange={(e) => handleSearch(e.target.value)}
+              className="w-full bg-belmont-bg/80 text-xs text-belmont-text-primary pl-9 pr-3 py-2 rounded-xl border border-belmont-border focus:border-belmont-rose focus:outline-none transition-colors"
+            />
+          </div>
         </div>
 
+        {/* Member List */}
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {isSearching ? (
-            <p className="text-xs text-belmont-text-muted text-center py-4 italic">Buscando membros...</p>
-          ) : conversationsList.length === 0 ? (
-            <p className="text-xs text-belmont-text-muted text-center py-4 italic">Nenhum membro encontrado.</p>
+          {isLoading ? (
+            <div className="space-y-2 p-2">
+              <Skeleton className="h-14 w-full rounded-2xl" />
+              <Skeleton className="h-14 w-full rounded-2xl" />
+            </div>
+          ) : profiles.length === 0 ? (
+            <p className="text-xs text-belmont-text-muted text-center py-6">
+              Nenhum membro encontrado.
+            </p>
           ) : (
-            conversationsList.map((user) => {
-              const isSelected = selectedUser?.id === user.id
+            profiles.map((profile) => {
+              const isSelected = selectedProfile?.id === profile.id
               return (
                 <button
-                  key={user.id}
-                  onClick={() => setSelectedUser(user)}
-                  className={`w-full flex items-center gap-3 p-3 rounded-2xl transition-all text-left ${
+                  key={profile.id}
+                  onClick={() => setSelectedProfile(profile)}
+                  className={`w-full p-3 rounded-2xl flex items-center gap-3 transition-colors text-left ${
                     isSelected
-                      ? 'bg-gradient-to-r from-belmont-crimson/20 to-transparent border-l-2 border-belmont-rose text-white'
+                      ? 'bg-belmont-crimson/20 border border-belmont-rose/30 text-white'
                       : 'hover:bg-white/5 text-belmont-text-secondary'
                   }`}
                 >
-                  <Avatar src={user.avatar_url} fallback={user.display_name} size="md" status="online" />
-                  <div className="flex-1 truncate">
+                  <Avatar src={profile.avatar_url} fallback={profile.display_name} size="md" />
+                  <div className="truncate flex-1">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-belmont-text-primary truncate">
-                        {user.display_name}
-                      </span>
-                      <span className="text-[10px] text-belmont-text-muted">Ativo</span>
+                      <p className="text-xs font-bold text-belmont-text-primary truncate">
+                        {profile.display_name}
+                      </p>
+                      {profile.is_admin && <Badge variant="crimson" size="sm">ADMIN</Badge>}
                     </div>
-                    <p className="text-[11px] text-belmont-text-muted truncate mt-0.5">
-                      {user.status_text || `@${user.username}`}
+                    <p className="text-[10px] text-belmont-text-muted truncate">
+                      @{profile.username}
                     </p>
                   </div>
                 </button>
@@ -103,60 +132,66 @@ export default function PrivateMessagesPage() {
         </div>
       </div>
 
-      {/* Active Conversation Chat Pane */}
+      {/* DM Chat Pane */}
       <div
-        className={`flex-1 flex flex-col bg-belmont-bg/50 ${
-          !selectedUser ? 'hidden md:flex' : 'flex'
+        className={`flex-1 flex-col bg-belmont-bg/40 ${
+          selectedProfile ? 'flex' : 'hidden md:flex'
         }`}
       >
-        {selectedUser ? (
+        {selectedProfile ? (
           <>
-            {/* Conversation Topbar */}
-            <div className="px-5 py-3.5 bg-belmont-surface/90 border-b border-belmont-border flex items-center justify-between">
+            {/* DM Header */}
+            <div className="p-4 bg-belmont-surface/90 border-b border-belmont-border flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <button
-                  onClick={() => setSelectedUser(null)}
-                  className="md:hidden p-1.5 text-belmont-text-muted hover:text-belmont-text-primary rounded-lg hover:bg-white/5"
-                  title="Voltar para conversas"
+                  onClick={() => setSelectedProfile(null)}
+                  className="md:hidden p-1 text-belmont-text-muted hover:text-white"
                 >
                   <ArrowLeft className="w-5 h-5" />
                 </button>
-                <Avatar src={selectedUser.avatar_url} fallback={selectedUser.display_name} size="sm" status="online" />
+                <Avatar src={selectedProfile.avatar_url} fallback={selectedProfile.display_name} size="md" />
                 <div>
-                  <h3 className="text-sm font-bold text-belmont-text-primary font-display">
-                    {selectedUser.display_name}
-                  </h3>
-                  <p className="text-[10px] text-belmont-text-muted">@{selectedUser.username}</p>
+                  <h2 className="text-sm font-bold font-display text-belmont-text-primary">
+                    {selectedProfile.display_name}
+                  </h2>
+                  <p className="text-[10px] text-belmont-text-muted">
+                    @{selectedProfile.username}
+                  </p>
                 </div>
               </div>
-              <Badge variant="outline" size="sm">Canal Privado</Badge>
             </div>
 
-            {/* Messages Body */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-1">
-              {messages.map((msg) => (
-                <MessageBubble
-                  key={msg.id}
-                  message={msg}
-                  isCurrentUser={msg.sender_id === 'user-1'}
+            {/* DM Messages Area */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-2">
+              {messages.length === 0 ? (
+                <EmptyState
+                  icon={<MessageSquareDashed className="w-6 h-6 text-belmont-rose" />}
+                  title="Nenhuma conversa ainda."
+                  description={`Inicie um diálogo privado com ${selectedProfile.display_name}.`}
                 />
-              ))}
+              ) : (
+                messages.map((msg) => (
+                  <MessageBubble
+                    key={msg.id}
+                    message={msg}
+                    isCurrentUser={msg.sender_id === currentUserId}
+                  />
+                ))
+              )}
             </div>
 
-            {/* Input Footer */}
+            {/* Input */}
             <div className="p-3 bg-belmont-surface/90 border-t border-belmont-border">
-              <ChatInput onSendMessage={handleSendMessage} />
+              <ChatInput onSendMessage={handleSendMessage} placeholder={`Mensagem para @${selectedProfile.username}...`} />
             </div>
           </>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-belmont-text-muted">
-            <MessageSquare className="w-12 h-12 text-belmont-rose mb-3 opacity-60" />
-            <h3 className="text-base font-bold text-belmont-text-primary font-display">
-              Caixa de Mensagens Privadas
-            </h3>
-            <p className="text-xs text-belmont-text-muted mt-1 max-w-xs">
-              Selecione um membro na lista lateral para conversar diretamente.
-            </p>
+          <div className="flex-1 flex items-center justify-center p-6 text-center">
+            <EmptyState
+              icon={<Send className="w-8 h-8 text-belmont-text-muted" />}
+              title="Nenhuma conversa selecionada."
+              description="Selecione um membro da Mansão Belmont na lista ao lado para conversar."
+            />
           </div>
         )}
       </div>
