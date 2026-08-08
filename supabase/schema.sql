@@ -171,10 +171,6 @@ CREATE TABLE IF NOT EXISTS public.notifications (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- ===================================================
--- FASE 4: TABELAS DE ECONOMIA, XP & CONQUISTAS
--- ===================================================
-
 -- 11. COIN TRANSACTIONS TABLE
 CREATE TABLE IF NOT EXISTS public.coin_transactions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -224,7 +220,6 @@ CREATE INDEX IF NOT EXISTS idx_user_achievements_user ON public.user_achievement
 -- ECONOMY & PROGRESSION RPC SECURITY FUNCTIONS
 -- ===================================================
 
--- RPC 1: Admin Coin Adjustment Function
 CREATE OR REPLACE FUNCTION public.add_coins_admin(
   p_user_id UUID,
   p_amount INTEGER,
@@ -248,7 +243,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- RPC 2: Add XP and Evaluate Rank Progression
 CREATE OR REPLACE FUNCTION public.add_xp_and_evaluate_rank(
   p_user_id UUID,
   p_xp_amount INTEGER
@@ -294,7 +288,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- RPC 3: Unlock Achievement Function
 CREATE OR REPLACE FUNCTION public.unlock_achievement(
   p_user_id UUID,
   p_achievement_id TEXT
@@ -335,26 +328,101 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ===================================================
--- ROW LEVEL SECURITY (RLS) POLICIES
+-- ROW LEVEL SECURITY (RLS) POLICIES — ALL TABLES
 -- ===================================================
 
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.welcome_content ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.announcements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.posts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.post_likes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.post_comments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.conversation_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.coin_transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_progress ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.achievements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_achievements ENABLE ROW LEVEL SECURITY;
 
+-- 1. Profiles Policies
+DROP POLICY IF EXISTS "Profiles - read all authenticated" ON public.profiles;
+CREATE POLICY "Profiles - read all authenticated" ON public.profiles FOR SELECT USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Profiles - update own profile" ON public.profiles;
+CREATE POLICY "Profiles - update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
+
+DROP POLICY IF EXISTS "Profiles - insert own profile" ON public.profiles;
+CREATE POLICY "Profiles - insert own profile" ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
+
+-- 2. Welcome Content Policies
+DROP POLICY IF EXISTS "Welcome content - read all authenticated" ON public.welcome_content;
+CREATE POLICY "Welcome content - read all authenticated" ON public.welcome_content FOR SELECT USING (auth.role() = 'authenticated');
+
+-- 3. Announcements Policies
+DROP POLICY IF EXISTS "Announcements - read all authenticated" ON public.announcements;
+CREATE POLICY "Announcements - read all authenticated" ON public.announcements FOR SELECT USING (auth.role() = 'authenticated');
+
+-- 4. Posts Policies
+DROP POLICY IF EXISTS "Posts - read all authenticated" ON public.posts;
+CREATE POLICY "Posts - read all authenticated" ON public.posts FOR SELECT USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Posts - insert own" ON public.posts;
+CREATE POLICY "Posts - insert own" ON public.posts FOR INSERT WITH CHECK (auth.uid() = author_id);
+
+-- 5. Post Likes Policies
+DROP POLICY IF EXISTS "Post likes - read all authenticated" ON public.post_likes;
+CREATE POLICY "Post likes - read all authenticated" ON public.post_likes FOR SELECT USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Post likes - insert own" ON public.post_likes;
+CREATE POLICY "Post likes - insert own" ON public.post_likes FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Post likes - delete own" ON public.post_likes;
+CREATE POLICY "Post likes - delete own" ON public.post_likes FOR DELETE USING (auth.uid() = user_id);
+
+-- 6. Post Comments Policies
+DROP POLICY IF EXISTS "Post comments - read all authenticated" ON public.post_comments;
+CREATE POLICY "Post comments - read all authenticated" ON public.post_comments FOR SELECT USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Post comments - insert own" ON public.post_comments;
+CREATE POLICY "Post comments - insert own" ON public.post_comments FOR INSERT WITH CHECK (auth.uid() = author_id);
+
+-- 7. Conversations Policies
+DROP POLICY IF EXISTS "Conversations - read all authenticated" ON public.conversations;
+CREATE POLICY "Conversations - read all authenticated" ON public.conversations FOR SELECT USING (auth.role() = 'authenticated');
+
+-- 8. Conversation Members Policies
+DROP POLICY IF EXISTS "Conversation members - read all authenticated" ON public.conversation_members;
+CREATE POLICY "Conversation members - read all authenticated" ON public.conversation_members FOR SELECT USING (auth.role() = 'authenticated');
+
+-- 9. Messages Policies
+DROP POLICY IF EXISTS "Messages - read all authenticated" ON public.messages;
+CREATE POLICY "Messages - read all authenticated" ON public.messages FOR SELECT USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Messages - insert own" ON public.messages;
+CREATE POLICY "Messages - insert own" ON public.messages FOR INSERT WITH CHECK (auth.uid() = sender_id);
+
+-- 10. Notifications Policies
+DROP POLICY IF EXISTS "Notifications - read own" ON public.notifications;
+CREATE POLICY "Notifications - read own" ON public.notifications FOR SELECT USING (user_id = auth.uid());
+
+DROP POLICY IF EXISTS "Notifications - update own" ON public.notifications;
+CREATE POLICY "Notifications - update own" ON public.notifications FOR UPDATE USING (user_id = auth.uid());
+
+-- 11. Coin Transactions Policies
 DROP POLICY IF EXISTS "Coin transactions - read own" ON public.coin_transactions;
 CREATE POLICY "Coin transactions - read own" ON public.coin_transactions FOR SELECT USING (user_id = auth.uid() OR public.is_admin());
 
+-- 12. User Progress Policies
 DROP POLICY IF EXISTS "User progress - read all authenticated" ON public.user_progress;
 CREATE POLICY "User progress - read all authenticated" ON public.user_progress FOR SELECT USING (auth.role() = 'authenticated');
 
+-- 13. Achievements Catalogue Policies
 DROP POLICY IF EXISTS "Achievements - read all authenticated" ON public.achievements;
 CREATE POLICY "Achievements - read all authenticated" ON public.achievements FOR SELECT USING (auth.role() = 'authenticated');
 
-DROP POLICY IF EXISTS "Achievements - admin modify" ON public.achievements;
-CREATE POLICY "Achievements - admin modify" ON public.achievements FOR ALL USING (public.is_admin());
-
+-- 14. User Achievements Policies
 DROP POLICY IF EXISTS "User achievements - read all authenticated" ON public.user_achievements;
 CREATE POLICY "User achievements - read all authenticated" ON public.user_achievements FOR SELECT USING (auth.role() = 'authenticated');
 
