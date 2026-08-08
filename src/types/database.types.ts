@@ -54,6 +54,255 @@ export type Database = {
         }
         Relationships: []
       }
+      bank_accounts: {
+        Row: {
+          user_id: string
+          balance: number
+          accrued_yield: number
+          yield_rate: number
+          last_yield_calculated_at: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          user_id: string
+          balance?: number
+          accrued_yield?: number
+          yield_rate?: number
+          last_yield_calculated_at?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          user_id?: string
+          balance?: number
+          accrued_yield?: number
+          yield_rate?: number
+          last_yield_calculated_at?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      bank_transactions: {
+        Row: {
+          id: string
+          user_id: string
+          type: string
+          amount: number
+          description: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          type: string
+          amount: number
+          description: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          type?: string
+          amount?: number
+          description?: string
+          created_at?: string
+        }
+        Relationships: []
+      }
+      assets: {
+        Row: {
+          id: string
+          symbol: string
+          name: string
+          description: string
+          current_price: number
+          change_24h: number
+          volume_24h: number
+          is_active: boolean
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          symbol: string
+          name: string
+          description: string
+          current_price?: number
+          change_24h?: number
+          volume_24h?: number
+          is_active?: boolean
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          symbol?: string
+          name?: string
+          description?: string
+          current_price?: number
+          change_24h?: number
+          volume_24h?: number
+          is_active?: boolean
+          created_at?: string
+        }
+        Relationships: []
+      }
+      asset_prices: {
+        Row: {
+          id: string
+          asset_id: string
+          price: number
+          volume: number
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          asset_id: string
+          price: number
+          volume?: number
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          asset_id?: string
+          price?: number
+          volume?: number
+          created_at?: string
+        }
+        Relationships: []
+      }
+      market_agents: {
+        Row: {
+          id: string
+          name: string
+          personality: string
+          cash_balance: number
+          is_active: boolean
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          personality: string
+          cash_balance?: number
+          is_active?: boolean
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          personality?: string
+          cash_balance?: number
+          is_active?: boolean
+          created_at?: string
+        }
+        Relationships: []
+      }
+      orders: {
+        Row: {
+          id: string
+          user_id: string | null
+          agent_id: string | null
+          asset_id: string
+          side: string
+          order_type: string
+          price: number
+          quantity: number
+          filled_quantity: number
+          status: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id?: string | null
+          agent_id?: string | null
+          asset_id: string
+          side: string
+          order_type: string
+          price: number
+          quantity: number
+          filled_quantity?: number
+          status?: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string | null
+          agent_id?: string | null
+          asset_id?: string
+          side?: string
+          order_type?: string
+          price?: number
+          quantity?: number
+          filled_quantity?: number
+          status?: string
+          created_at?: string
+        }
+        Relationships: []
+      }
+      trades: {
+        Row: {
+          id: string
+          asset_id: string
+          buy_order_id: string
+          sell_order_id: string
+          buyer_id: string | null
+          seller_id: string | null
+          price: number
+          quantity: number
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          asset_id: string
+          buy_order_id: string
+          sell_order_id: string
+          buyer_id?: string | null
+          seller_id?: string | null
+          price: number
+          quantity: number
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          asset_id?: string
+          buy_order_id?: string
+          sell_order_id?: string
+          buyer_id?: string | null
+          seller_id?: string | null
+          price?: number
+          quantity?: number
+          created_at?: string
+        }
+        Relationships: []
+      }
+      holdings: {
+        Row: {
+          id: string
+          user_id: string
+          asset_id: string
+          quantity: number
+          average_price: number
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          asset_id: string
+          quantity?: number
+          average_price?: number
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          asset_id?: string
+          quantity?: number
+          average_price?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       coin_transactions: {
         Row: {
           id: string
@@ -394,7 +643,7 @@ export type Database = {
           type: string
           entity_type?: string | null
           entity_id?: string | null
-          content: string
+          content?: string
           is_read?: boolean
           created_at?: string
         }

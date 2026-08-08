@@ -8,6 +8,22 @@ export type UserAchievement = Database['public']['Tables']['user_achievements'][
   achievement?: Achievement
 }
 
+export type BankAccount = Database['public']['Tables']['bank_accounts']['Row']
+export type BankTransaction = Database['public']['Tables']['bank_transactions']['Row']
+export type Asset = Database['public']['Tables']['assets']['Row']
+export type AssetPrice = Database['public']['Tables']['asset_prices']['Row']
+export type MarketAgent = Database['public']['Tables']['market_agents']['Row']
+export type Order = Database['public']['Tables']['orders']['Row'] & {
+  asset?: Asset
+  user?: Profile
+}
+export type Trade = Database['public']['Tables']['trades']['Row'] & {
+  asset?: Asset
+}
+export type Holding = Database['public']['Tables']['holdings']['Row'] & {
+  asset?: Asset
+}
+
 export type Post = Database['public']['Tables']['posts']['Row'] & {
   author?: Profile
   likes?: Database['public']['Tables']['post_likes']['Row'][]

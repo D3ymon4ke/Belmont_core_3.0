@@ -17,6 +17,8 @@ import {
   LogOut,
   ChevronRight,
   Wallet,
+  Landmark,
+  BarChart3,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { Avatar } from '@/components/ui/Avatar'
@@ -45,6 +47,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentProfile }) => {
       title: 'Mansão',
       items: [
         { label: 'Command Center', href: '/home', icon: Home },
+        { label: 'Banco Belmont', href: '/banco', icon: Landmark },
+        { label: 'Bolsa Belmont', href: '/bolsa', icon: BarChart3 },
         { label: 'Boas-Vindas & Lore', href: '/boas-vindas', icon: Sparkles },
       ],
     },
@@ -159,7 +163,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentProfile }) => {
               src={currentProfile?.avatar_url}
               fallback={currentProfile?.display_name || 'B'}
               size="sm"
-              status="online"
             />
             <div className="truncate">
               <p className="text-xs font-bold text-belmont-text-primary truncate">
