@@ -2,19 +2,40 @@ import { createClient } from '@/lib/supabase/client'
 import { Asset, AssetPrice, Order, Trade, Holding, MarketAgent } from '@/types'
 
 /**
- * Fetch All Active Assets in Bolsa Belmont
+ * Fetch All Active Assets in Bolsa Belmont with Dynamic 24h Change Calculation
  */
 export async function getAssetsService(): Promise<Asset[]> {
   const supabase = createClient()
   try {
-    const { data, error } = await (supabase
+    const { data: assets, error } = await (supabase
       .from('assets') as any)
       .select('*')
       .eq('is_active', true)
       .order('symbol', { ascending: true })
 
-    if (error || !data) return []
-    return data as Asset[]
+    if (error || !assets) return []
+
+    // Calculate dynamic 24h change % based on asset_prices history
+    const enrichedAssets = await Promise.all(
+      assets.map(async (asset: Asset) => {
+        const { data: firstPriceLog } = await (supabase
+          .from('asset_prices') as any)
+          .select('price')
+          .eq('asset_id', asset.id)
+          .order('created_at', { ascending: true })
+          .limit(1)
+          .single()
+
+        if (firstPriceLog && firstPriceLog.price > 0) {
+          const basePrice = firstPriceLog.price
+          const changePct = Number((((asset.current_price - basePrice) / basePrice) * 100).toFixed(2))
+          return { ...asset, change_24h: changePct }
+        }
+        return asset
+      })
+    )
+
+    return enrichedAssets
   } catch (e) {
     return []
   }
