@@ -39,12 +39,23 @@ export const CandleChart: React.FC<CandleChartProps> = ({
   const [hoveredCandle, setHoveredCandle] = useState<CandleOHLCV | null>(null)
   const [isLoading, setIsLoading] = useState<boolean>(true)
 
+  // Reset candle state on asset switch to avoid rendering previous asset data
+  useEffect(() => {
+    setCandles([])
+    setHoveredCandle(null)
+    setIsLoading(true)
+  }, [assetId, timeframe])
+
   // Fetch real aggregated candles
   const fetchCandles = useCallback(async () => {
-    setIsLoading(true)
-    const data = await getCandlesService(assetId, timeframe)
-    setCandles(data)
-    setIsLoading(false)
+    try {
+      const data = await getCandlesService(assetId, timeframe)
+      setCandles(data)
+    } catch (e) {
+      setCandles([])
+    } finally {
+      setIsLoading(false)
+    }
   }, [assetId, timeframe])
 
   useEffect(() => {
@@ -59,7 +70,7 @@ export const CandleChart: React.FC<CandleChartProps> = ({
     if (!chartContainerRef.current) return
 
     const container = chartContainerRef.current
-    container.innerHTML = '' // Clean previous instances
+    container.innerHTML = '' // Clean previous instances completely
 
     const chart = createChart(container, {
       width: container.clientWidth,
@@ -70,8 +81,8 @@ export const CandleChart: React.FC<CandleChartProps> = ({
         fontFamily: 'Consolas, Monaco, monospace',
       },
       grid: {
-        vertLines: { color: 'rgba(255, 255, 255, 0.03)' },
-        horzLines: { color: 'rgba(255, 255, 255, 0.03)' },
+        vertLines: { color: 'rgba(255, 255, 255, 0.04)' },
+        horzLines: { color: 'rgba(255, 255, 255, 0.04)' },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
@@ -100,7 +111,7 @@ export const CandleChart: React.FC<CandleChartProps> = ({
         borderColor: 'rgba(255, 255, 255, 0.08)',
         timeVisible: true,
         secondsVisible: false,
-        barSpacing: 12,
+        barSpacing: 14,
         minBarSpacing: 4,
         rightOffset: 6,
       },
@@ -108,21 +119,25 @@ export const CandleChart: React.FC<CandleChartProps> = ({
 
     chartRef.current = chart
 
-    // Add Candlestick Series (Lightweight Charts v5 compatibility)
+    // Add Candlestick Series matching reference image aesthetics (Vibrant Green & Pure Red)
     const candlestickSeries = (chart as any).addCandlestickSeries
       ? (chart as any).addCandlestickSeries({
-          upColor: '#10B981',
-          downColor: '#EF4444',
-          borderVisible: false,
-          wickUpColor: '#10B981',
-          wickDownColor: '#EF4444',
+          upColor: '#00C853',
+          downColor: '#FF1744',
+          borderVisible: true,
+          borderUpColor: '#00C853',
+          borderDownColor: '#FF1744',
+          wickUpColor: '#00C853',
+          wickDownColor: '#FF1744',
         })
       : chart.addSeries(CandlestickSeries, {
-          upColor: '#10B981',
-          downColor: '#EF4444',
-          borderVisible: false,
-          wickUpColor: '#10B981',
-          wickDownColor: '#EF4444',
+          upColor: '#00C853',
+          downColor: '#FF1744',
+          borderVisible: true,
+          borderUpColor: '#00C853',
+          borderDownColor: '#FF1744',
+          wickUpColor: '#00C853',
+          wickDownColor: '#FF1744',
         })
 
     candlestickSeriesRef.current = candlestickSeries
@@ -138,14 +153,15 @@ export const CandleChart: React.FC<CandleChartProps> = ({
           priceScaleId: 'volume',
         })
 
-    // Configure separate volume price scale to occupy bottom 20% without polluting right Y-axis
-    chart.priceScale('volume').applyOptions({
-      scaleMargins: {
-        top: 0.8,
-        bottom: 0,
-      },
-      visible: false,
-    })
+    if (volumeSeries.priceScale) {
+      volumeSeries.priceScale().applyOptions({
+        scaleMargins: {
+          top: 0.8,
+          bottom: 0,
+        },
+        visible: false,
+      })
+    }
 
     volumeSeriesRef.current = volumeSeries
 
@@ -176,7 +192,6 @@ export const CandleChart: React.FC<CandleChartProps> = ({
       }
     })
 
-    // Handle Window Resize
     const handleResize = () => {
       if (container && chartRef.current) {
         chartRef.current.applyOptions({ width: container.clientWidth })
@@ -184,15 +199,22 @@ export const CandleChart: React.FC<CandleChartProps> = ({
     }
     window.addEventListener('resize', handleResize)
 
+    // Clean cleanup function on asset switch or unmount
     return () => {
       window.removeEventListener('resize', handleResize)
-      chart.remove()
+      if (chartRef.current) {
+        try {
+          chartRef.current.remove()
+        } catch (e) {}
+      }
       chartRef.current = null
+      candlestickSeriesRef.current = null
+      volumeSeriesRef.current = null
       priceLineRef.current = null
     }
   }, [assetId])
 
-  // Update Series Data on Candles Refresh & Single Last Price Line Update
+  // Update Series Data safely on Candles Refresh
   useEffect(() => {
     if (!candlestickSeriesRef.current || !volumeSeriesRef.current || candles.length === 0) return
 
@@ -207,36 +229,38 @@ export const CandleChart: React.FC<CandleChartProps> = ({
     const formattedVolume = candles.map((c) => ({
       time: c.time as UTCTimestamp,
       value: c.volume,
-      color: c.close >= c.open ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)',
+      color: c.close >= c.open ? 'rgba(0, 200, 83, 0.35)' : 'rgba(255, 23, 68, 0.35)',
     }))
 
-    candlestickSeriesRef.current.setData(formattedCandles)
-    volumeSeriesRef.current.setData(formattedVolume)
+    try {
+      candlestickSeriesRef.current.setData(formattedCandles)
+      volumeSeriesRef.current.setData(formattedVolume)
 
-    // Manage SINGLE Last Price Line (Remove existing line before creating updated line)
-    if (candlestickSeriesRef.current) {
-      if (priceLineRef.current && candlestickSeriesRef.current.removePriceLine) {
-        try {
-          candlestickSeriesRef.current.removePriceLine(priceLineRef.current)
-        } catch (e) {
-          // ignore
+      // Manage SINGLE Last Price Line safely
+      if (candlestickSeriesRef.current) {
+        if (priceLineRef.current && candlestickSeriesRef.current.removePriceLine) {
+          try {
+            candlestickSeriesRef.current.removePriceLine(priceLineRef.current)
+          } catch (e) {}
+        }
+
+        if (currentPrice > 0 && candlestickSeriesRef.current.createPriceLine) {
+          priceLineRef.current = candlestickSeriesRef.current.createPriceLine({
+            price: currentPrice,
+            color: '#F59E0B',
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: '',
+          })
         }
       }
 
-      if (currentPrice > 0 && candlestickSeriesRef.current.createPriceLine) {
-        priceLineRef.current = candlestickSeriesRef.current.createPriceLine({
-          price: currentPrice,
-          color: '#F59E0B',
-          lineWidth: 1,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: '',
-        })
+      if (chartRef.current) {
+        chartRef.current.timeScale().fitContent()
       }
-    }
-
-    if (chartRef.current) {
-      chartRef.current.timeScale().fitContent()
+    } catch (e) {
+      // Ignore transient race condition updates during asset transition
     }
   }, [candles, currentPrice])
 
@@ -327,7 +351,7 @@ export const CandleChart: React.FC<CandleChartProps> = ({
         {isLoading && candles.length === 0 && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-950/80 rounded-2xl text-xs text-belmont-text-muted gap-2">
             <RefreshCw className="w-4 h-4 animate-spin text-belmont-rose" />
-            <span>Carregando gráfico do TradingView...</span>
+            <span>Sincronizando gráfico...</span>
           </div>
         )}
 

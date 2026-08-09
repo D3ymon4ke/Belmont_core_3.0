@@ -2,7 +2,7 @@ const { Client } = require('pg');
 
 const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:E08059900pe%40@db.wlqorxvcrfpmvvhxgjiy.supabase.co:5432/postgres';
 
-// Trend state persistence for organic financial market movements
+// Persistent trend and phase momentum for realistic wave financial curves
 const assetTrends = {};
 
 async function runMarketCycle() {
@@ -32,41 +32,38 @@ async function runMarketCycle() {
 
     const getRandomAgent = () => agents[Math.floor(Math.random() * agents.length)];
 
-    // 2. Process each asset with organic trend-following volatility
+    // 2. Process each asset with smooth organic financial wave movement
     for (const asset of assets) {
       const currentPrice = asset.current_price;
 
-      // Initialize trend state if missing
+      // Initialize organic wave state if missing
       if (!assetTrends[asset.symbol]) {
         assetTrends[asset.symbol] = {
           direction: Math.random() > 0.5 ? 1 : -1,
-          stepsLeft: Math.floor(Math.random() * 5) + 3,
+          stepsLeft: Math.floor(Math.random() * 6) + 4,
+          phase: Math.random() * Math.PI * 2,
         };
       }
 
       const trend = assetTrends[asset.symbol];
       trend.stepsLeft -= 1;
+      trend.phase += 0.3;
 
-      // Event Sentiment & Micro-wave Fluctuation
+      // Event Sentiment & Wave Sine Fluctuation
       const assetEvents = activeEvents.filter(e => e.target_asset_id === asset.id);
       const eventSentiment = assetEvents.reduce((acc, curr) => acc + parseFloat(curr.impact_score || 0), 0);
 
-      // 70% chance to follow active trend, 30% noise/reversal
-      let stepDir = trend.direction;
-      if (Math.random() < 0.3) {
-        stepDir = -trend.direction;
-      }
-
-      // Small organic step (0, 1, or 2 Coins)
-      const stepMagnitude = Math.random() > 0.6 ? 2 : (Math.random() > 0.2 ? 1 : 0);
-      const priceDelta = (stepDir * stepMagnitude) + Math.round(eventSentiment * 0.3);
+      // Smooth wave movement: 75% trend direction + gentle sine wave curve
+      const sineWaveDelta = Math.sin(trend.phase) * 1.2;
+      const trendDelta = trend.direction * (Math.random() > 0.3 ? 1 : 0);
+      const priceDelta = Math.round(trendDelta + sineWaveDelta + (eventSentiment * 0.2));
 
       const centralPrice = Math.max(5, currentPrice + priceDelta);
 
-      // Re-evaluate trend direction when steps expire
+      // Transition trend when steps expire
       if (trend.stepsLeft <= 0) {
         trend.direction = Math.random() > 0.45 ? 1 : -1;
-        trend.stepsLeft = Math.floor(Math.random() * 6) + 4;
+        trend.stepsLeft = Math.floor(Math.random() * 8) + 4;
       }
 
       // Top up holdings for all NPCs if needed
