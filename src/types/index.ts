@@ -10,7 +10,12 @@ export type UserAchievement = Database['public']['Tables']['user_achievements'][
 
 export type BankAccount = Database['public']['Tables']['bank_accounts']['Row']
 export type BankTransaction = Database['public']['Tables']['bank_transactions']['Row']
-export type Asset = Database['public']['Tables']['assets']['Row']
+export type Asset = Database['public']['Tables']['assets']['Row'] & {
+  high_24h?: number
+  low_24h?: number
+  trades_24h_count?: number
+  last_trade_at?: string
+}
 export type AssetPrice = Database['public']['Tables']['asset_prices']['Row']
 export type MarketAgent = Database['public']['Tables']['market_agents']['Row']
 export type Order = Database['public']['Tables']['orders']['Row'] & {
@@ -19,6 +24,9 @@ export type Order = Database['public']['Tables']['orders']['Row'] & {
 }
 export type Trade = Database['public']['Tables']['trades']['Row'] & {
   asset?: Asset
+  buyer_name?: string
+  seller_name?: string
+  side?: 'buy' | 'sell'
 }
 export type Holding = Database['public']['Tables']['holdings']['Row'] & {
   asset?: Asset
