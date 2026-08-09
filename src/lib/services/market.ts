@@ -44,7 +44,7 @@ export async function getAssetsService(): Promise<Asset[]> {
           .limit(1)
           .maybeSingle()
 
-        const currentPrice = latestTrade ? latestTrade.price : asset.current_price
+        const currentPrice = latestTrade ? parseFloat(latestTrade.price) : parseFloat(asset.current_price || '100')
         const lastTradeAt = latestTrade ? latestTrade.created_at : asset.created_at
 
         // 2. Fetch real 24h trades statistics
@@ -65,16 +65,17 @@ export async function getAssetsService(): Promise<Asset[]> {
           tradesCount = trades24h.length
           const prices: number[] = []
 
-          trades24h.forEach((tr: { price: number; quantity: number }) => {
-            vol24h += tr.price * tr.quantity
-            prices.push(tr.price)
+          trades24h.forEach((tr: { price: any; quantity: number }) => {
+            const p = parseFloat(tr.price)
+            vol24h += p * tr.quantity
+            prices.push(p)
           })
 
           high24h = Math.max(...prices)
           low24h = Math.min(...prices)
 
           // Compare against oldest trade in 24h window
-          const oldestTradePrice = trades24h[0].price
+          const oldestTradePrice = parseFloat(trades24h[0].price)
           if (oldestTradePrice > 0) {
             changePct = Number((((currentPrice - oldestTradePrice) / oldestTradePrice) * 100).toFixed(2))
           }
@@ -83,7 +84,7 @@ export async function getAssetsService(): Promise<Asset[]> {
         return {
           ...asset,
           current_price: currentPrice,
-          volume_24h: vol24h,
+          volume_24h: Number(vol24h.toFixed(2)),
           change_24h: changePct,
           high_24h: high24h,
           low_24h: low24h,
@@ -133,8 +134,8 @@ export async function getOrderBookService(assetId: string): Promise<{ buyOrders:
     )
 
     return {
-      buyOrders: buys,
-      sellOrders: sells,
+      buyOrders: buys.map(b => ({ ...b, price: parseFloat(b.price as any) })),
+      sellOrders: sells.map(s => ({ ...s, price: parseFloat(s.price as any) })),
       maxQuantity: maxQtyInBook,
     }
   } catch (e) {
@@ -158,7 +159,11 @@ export async function getUserHoldingsService(userId?: string): Promise<Holding[]
       .gt('quantity', 0)
 
     if (error || !data) return []
-    return data as Holding[]
+    return (data as Holding[]).map(h => ({
+      ...h,
+      average_price: parseFloat(h.average_price as any),
+      asset: h.asset ? { ...h.asset, current_price: parseFloat(h.asset.current_price as any) } : undefined
+    }))
   } catch (e) {
     return []
   }
@@ -180,7 +185,10 @@ export async function getUserOrdersService(userId?: string): Promise<Order[]> {
       .order('created_at', { ascending: false })
 
     if (error || !data) return []
-    return data as Order[]
+    return (data as Order[]).map(o => ({
+      ...o,
+      price: parseFloat(o.price as any),
+    }))
   } catch (e) {
     return []
   }
@@ -200,6 +208,7 @@ export async function getTradeHistoryService(assetId?: string): Promise<Trade[]>
 
     return (data as Trade[]).map((tr) => ({
       ...tr,
+      price: parseFloat(tr.price as any),
       side: tr.buyer_id ? 'buy' : 'sell',
     }))
   } catch (e) {
@@ -351,12 +360,12 @@ export async function getCandlesService(
 
     const candles: CandleOHLCV[] = []
     for (const [sec, bucket] of groupedMap.entries()) {
-      const prices = bucket.items.map((i) => i.price)
+      const prices = bucket.items.map((i) => parseFloat(i.price))
       const open = prices[0]
       const close = prices[prices.length - 1]
       const high = Math.max(...prices)
       const low = Math.min(...prices)
-      const volume = bucket.items.reduce((sum, i) => sum + (i.price * i.quantity), 0)
+      const volume = bucket.items.reduce((sum, i) => sum + (parseFloat(i.price) * i.quantity), 0)
 
       const d = new Date(sec * 1000)
       const timeStr = timeframe === '1D'
@@ -370,7 +379,7 @@ export async function getCandlesService(
         high,
         low,
         close,
-        volume,
+        volume: Number(volume.toFixed(2)),
       })
     }
 

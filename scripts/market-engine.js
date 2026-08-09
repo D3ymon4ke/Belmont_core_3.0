@@ -2,7 +2,7 @@ const { Client } = require('pg');
 
 const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:E08059900pe%40@db.wlqorxvcrfpmvvhxgjiy.supabase.co:5432/postgres';
 
-// Persistent trend and phase momentum for realistic wave financial curves
+// Persistent trend and phase momentum for multi-level order book & organic waves
 const assetTrends = {};
 
 async function runMarketCycle() {
@@ -32,35 +32,35 @@ async function runMarketCycle() {
 
     const getRandomAgent = () => agents[Math.floor(Math.random() * agents.length)];
 
-    // 2. Process each asset with smooth organic financial wave movement
+    // 2. Process each asset with multi-level depth order book & continuous decimal precision
     for (const asset of assets) {
-      const currentPrice = asset.current_price;
+      const currentPrice = parseFloat(asset.current_price) || 100.0;
 
-      // Initialize organic wave state if missing
+      // Initialize trend momentum state
       if (!assetTrends[asset.symbol]) {
         assetTrends[asset.symbol] = {
           direction: Math.random() > 0.5 ? 1 : -1,
-          stepsLeft: Math.floor(Math.random() * 6) + 4,
+          stepsLeft: Math.floor(Math.random() * 8) + 4,
           phase: Math.random() * Math.PI * 2,
         };
       }
 
       const trend = assetTrends[asset.symbol];
       trend.stepsLeft -= 1;
-      trend.phase += 0.3;
+      trend.phase += 0.25;
 
-      // Event Sentiment & Wave Sine Fluctuation
+      // Event Sentiment & Micro-wave Fluctuation
       const assetEvents = activeEvents.filter(e => e.target_asset_id === asset.id);
       const eventSentiment = assetEvents.reduce((acc, curr) => acc + parseFloat(curr.impact_score || 0), 0);
 
-      // Smooth wave movement: 75% trend direction + gentle sine wave curve
-      const sineWaveDelta = Math.sin(trend.phase) * 1.2;
-      const trendDelta = trend.direction * (Math.random() > 0.3 ? 1 : 0);
-      const priceDelta = Math.round(trendDelta + sineWaveDelta + (eventSentiment * 0.2));
+      // Continuous organic decimal price delta (e.g. +0.45, -0.30, +0.85, -0.60)
+      const sineDelta = Math.sin(trend.phase) * 0.8;
+      const trendDelta = trend.direction * (Math.random() * 0.7 + 0.1);
+      const priceDelta = Number((trendDelta + sineDelta + (eventSentiment * 0.25)).toFixed(2));
 
-      const centralPrice = Math.max(5, currentPrice + priceDelta);
+      let centralPrice = Number((Math.max(5.0, currentPrice + priceDelta)).toFixed(2));
 
-      // Transition trend when steps expire
+      // Re-evaluate trend direction when step count expires
       if (trend.stepsLeft <= 0) {
         trend.direction = Math.random() > 0.45 ? 1 : -1;
         trend.stepsLeft = Math.floor(Math.random() * 8) + 4;
@@ -76,40 +76,45 @@ async function runMarketCycle() {
         );
       }
 
-      // A) Create Book Depth (2 Bids below centralPrice, 2 Asks above centralPrice)
-      const buyer1 = getRandomAgent();
-      const seller1 = getRandomAgent();
+      // A) Create Multi-Level Order Book Depth (4 levels of Bids below, 4 levels of Asks above with decimal precision)
+      for (let level = 1; level <= 4; level++) {
+        const bidPrice = Number((Math.max(1, centralPrice - (level * 0.50))).toFixed(2));
+        const askPrice = Number((centralPrice + (level * 0.50)).toFixed(2));
 
-      await client.query(
-        `INSERT INTO public.orders (agent_id, asset_id, side, order_type, price, quantity, filled_quantity, status)
-         VALUES ($1, $2, 'buy', 'limit', $3, $4, 0, 'pending');`,
-        [buyer1.id, asset.id, Math.max(1, centralPrice - 1), Math.floor(Math.random() * 15) + 5]
-      );
+        const buyer = getRandomAgent();
+        const seller = getRandomAgent();
 
-      await client.query(
-        `INSERT INTO public.orders (agent_id, asset_id, side, order_type, price, quantity, filled_quantity, status)
-         VALUES ($1, $2, 'sell', 'limit', $3, $4, 0, 'pending');`,
-        [seller1.id, asset.id, centralPrice + 1, Math.floor(Math.random() * 15) + 5]
-      );
+        await client.query(
+          `INSERT INTO public.orders (agent_id, asset_id, side, order_type, price, quantity, filled_quantity, status)
+           VALUES ($1, $2, 'buy', 'limit', $3, $4, 0, 'pending');`,
+          [buyer.id, asset.id, bidPrice, Math.floor(Math.random() * 15) + 5]
+        );
 
-      // B) Create Match Orders at centralPrice to execute trade and log new price
-      const buyer2 = getRandomAgent();
-      let seller2 = getRandomAgent();
-      if (seller2.id === buyer2.id && agents.length > 1) {
-        seller2 = agents.find(a => a.id !== buyer2.id) || seller2;
+        await client.query(
+          `INSERT INTO public.orders (agent_id, asset_id, side, order_type, price, quantity, filled_quantity, status)
+           VALUES ($1, $2, 'sell', 'limit', $3, $4, 0, 'pending');`,
+          [seller.id, asset.id, askPrice, Math.floor(Math.random() * 15) + 5]
+        );
+      }
+
+      // B) Create Match Orders at centralPrice to execute trade and record new price
+      const buyerMatch = getRandomAgent();
+      let sellerMatch = getRandomAgent();
+      if (sellerMatch.id === buyerMatch.id && agents.length > 1) {
+        sellerMatch = agents.find(a => a.id !== buyerMatch.id) || sellerMatch;
       }
       const tradeQty = Math.floor(Math.random() * 20) + 5;
 
       await client.query(
         `INSERT INTO public.orders (agent_id, asset_id, side, order_type, price, quantity, filled_quantity, status)
          VALUES ($1, $2, 'buy', 'limit', $3, $4, 0, 'pending');`,
-        [buyer2.id, asset.id, centralPrice, tradeQty]
+        [buyerMatch.id, asset.id, centralPrice, tradeQty]
       );
 
       await client.query(
         `INSERT INTO public.orders (agent_id, asset_id, side, order_type, price, quantity, filled_quantity, status)
          VALUES ($1, $2, 'sell', 'limit', $3, $4, 0, 'pending');`,
-        [seller2.id, asset.id, centralPrice, tradeQty]
+        [sellerMatch.id, asset.id, centralPrice, tradeQty]
       );
 
       // C) Trigger PostgreSQL Matching Engine

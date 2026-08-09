@@ -120,25 +120,24 @@ export const CandleChart: React.FC<CandleChartProps> = ({
     chartRef.current = chart
 
     // Add Candlestick Series matching reference image aesthetics (Vibrant Green & Pure Red)
+    const seriesOptions = {
+      upColor: '#00C853',
+      downColor: '#FF1744',
+      borderVisible: true,
+      borderUpColor: '#00C853',
+      borderDownColor: '#FF1744',
+      wickUpColor: '#00C853',
+      wickDownColor: '#FF1744',
+      priceFormat: {
+        type: 'price',
+        precision: 2,
+        minMove: 0.01,
+      },
+    }
+
     const candlestickSeries = (chart as any).addCandlestickSeries
-      ? (chart as any).addCandlestickSeries({
-          upColor: '#00C853',
-          downColor: '#FF1744',
-          borderVisible: true,
-          borderUpColor: '#00C853',
-          borderDownColor: '#FF1744',
-          wickUpColor: '#00C853',
-          wickDownColor: '#FF1744',
-        })
-      : chart.addSeries(CandlestickSeries, {
-          upColor: '#00C853',
-          downColor: '#FF1744',
-          borderVisible: true,
-          borderUpColor: '#00C853',
-          borderDownColor: '#FF1744',
-          wickUpColor: '#00C853',
-          wickDownColor: '#FF1744',
-        })
+      ? (chart as any).addCandlestickSeries(seriesOptions)
+      : chart.addSeries(CandlestickSeries, seriesOptions)
 
     candlestickSeriesRef.current = candlestickSeries
 

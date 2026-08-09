@@ -597,8 +597,8 @@ DECLARE
   v_buy_order RECORD;
   v_sell_order RECORD;
   v_exec_qty INTEGER;
-  v_exec_price INTEGER;
-  v_total_cost INTEGER;
+  v_exec_price NUMERIC(10,2);
+  v_total_cost NUMERIC(12,2);
   v_matches_count INTEGER := 0;
 BEGIN
   LOOP
