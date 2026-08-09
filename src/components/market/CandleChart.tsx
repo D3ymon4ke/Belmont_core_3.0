@@ -1,7 +1,17 @@
 'use client'
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { createChart, IChartApi, ISeriesApi, ColorType, CrosshairMode, LineStyle, UTCTimestamp } from 'lightweight-charts'
+import {
+  createChart,
+  CandlestickSeries,
+  HistogramSeries,
+  IChartApi,
+  ISeriesApi,
+  ColorType,
+  CrosshairMode,
+  LineStyle,
+  UTCTimestamp,
+} from 'lightweight-charts'
 import { RefreshCw, ZoomIn, ZoomOut, RotateCcw, Activity, AlertCircle } from 'lucide-react'
 import { getCandlesService, CandleOHLCV } from '@/lib/services/market'
 
@@ -20,8 +30,8 @@ export const CandleChart: React.FC<CandleChartProps> = ({
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
-  const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
-  const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null)
+  const candlestickSeriesRef = useRef<ISeriesApi<any> | null>(null)
+  const volumeSeriesRef = useRef<ISeriesApi<any> | null>(null)
 
   const [timeframe, setTimeframe] = useState<'1m' | '5m' | '15m' | '1h' | '1D'>('1m')
   const [candles, setCandles] = useState<CandleOHLCV[]>([])
@@ -99,27 +109,44 @@ export const CandleChart: React.FC<CandleChartProps> = ({
 
     chartRef.current = chart
 
-    // Add Candlestick Series (Fine, professional Belmont colors)
-    const candlestickSeries = chart.addCandlestickSeries({
-      upColor: '#10B981',
-      downColor: '#EF4444',
-      borderVisible: false,
-      wickUpColor: '#10B981',
-      wickDownColor: '#EF4444',
-    })
+    // Add Candlestick Series (Lightweight Charts v5 compatibility)
+    const candlestickSeries = (chart as any).addCandlestickSeries
+      ? (chart as any).addCandlestickSeries({
+          upColor: '#10B981',
+          downColor: '#EF4444',
+          borderVisible: false,
+          wickUpColor: '#10B981',
+          wickDownColor: '#EF4444',
+        })
+      : chart.addSeries(CandlestickSeries, {
+          upColor: '#10B981',
+          downColor: '#EF4444',
+          borderVisible: false,
+          wickUpColor: '#10B981',
+          wickDownColor: '#EF4444',
+        })
+
     candlestickSeriesRef.current = candlestickSeries
 
-    // Add Volume Histogram Series (Bottom 20% height)
-    const volumeSeries = chart.addHistogramSeries({
-      priceFormat: { type: 'volume' },
-      priceScaleId: '',
-    })
-    volumeSeries.priceScale().applyOptions({
-      scaleMargins: {
-        top: 0.8, // Volume occupies bottom 20%
-        bottom: 0,
-      },
-    })
+    // Add Volume Histogram Series (Lightweight Charts v5 compatibility, bottom 20% height)
+    const volumeSeries = (chart as any).addHistogramSeries
+      ? (chart as any).addHistogramSeries({
+          priceFormat: { type: 'volume' },
+          priceScaleId: '',
+        })
+      : chart.addSeries(HistogramSeries, {
+          priceFormat: { type: 'volume' },
+          priceScaleId: '',
+        })
+
+    if (volumeSeries.priceScale) {
+      volumeSeries.priceScale().applyOptions({
+        scaleMargins: {
+          top: 0.8, // Volume occupies bottom 20%
+          bottom: 0,
+        },
+      })
+    }
     volumeSeriesRef.current = volumeSeries
 
     // Subscribe Crosshair Movement to Update Header OHLC
@@ -140,7 +167,7 @@ export const CandleChart: React.FC<CandleChartProps> = ({
           high: data.high,
           low: data.low,
           close: data.close,
-          volume: volumeData ? volumeData.value : 0,
+          volume: volumeData ? (volumeData.value || 0) : 0,
         })
       }
     })
@@ -182,7 +209,7 @@ export const CandleChart: React.FC<CandleChartProps> = ({
     volumeSeriesRef.current.setData(formattedVolume)
 
     // Add / Update Last Price Line
-    if (currentPrice > 0 && candlestickSeriesRef.current) {
+    if (currentPrice > 0 && candlestickSeriesRef.current && candlestickSeriesRef.current.createPriceLine) {
       candlestickSeriesRef.current.createPriceLine({
         price: currentPrice,
         color: '#F59E0B',
@@ -211,7 +238,7 @@ export const CandleChart: React.FC<CandleChartProps> = ({
 
   return (
     <div className="glass-panel p-5 rounded-3xl border border-belmont-border space-y-3 font-sans select-none relative bg-slate-950/70">
-      {/* Financial Terminal Header Bar (Section 5) */}
+      {/* Financial Terminal Header Bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-belmont-border/80">
         {/* Symbol, Price, 24h Change & Live Badge */}
         <div className="space-y-1">
@@ -290,7 +317,6 @@ export const CandleChart: React.FC<CandleChartProps> = ({
         )}
 
         {!isLoading && candles.length === 0 && (
-          /* Section 12 & Insufficient Data State */
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-slate-950/90 rounded-2xl p-6 text-center gap-2">
             <AlertCircle className="w-6 h-6 text-amber-400" />
             <p className="font-bold text-belmont-text-primary text-xs">Dados insuficientes para este período.</p>
