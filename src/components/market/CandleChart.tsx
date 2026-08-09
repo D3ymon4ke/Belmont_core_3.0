@@ -12,7 +12,7 @@ import {
   LineStyle,
   UTCTimestamp,
 } from 'lightweight-charts'
-import { RefreshCw, ZoomIn, ZoomOut, RotateCcw, Activity, AlertCircle } from 'lucide-react'
+import { RefreshCw, RotateCcw, Activity, AlertCircle } from 'lucide-react'
 import { getCandlesService, CandleOHLCV } from '@/lib/services/market'
 
 interface CandleChartProps {
@@ -32,6 +32,7 @@ export const CandleChart: React.FC<CandleChartProps> = ({
   const chartRef = useRef<IChartApi | null>(null)
   const candlestickSeriesRef = useRef<ISeriesApi<any> | null>(null)
   const volumeSeriesRef = useRef<ISeriesApi<any> | null>(null)
+  const priceLineRef = useRef<any>(null)
 
   const [timeframe, setTimeframe] = useState<'1m' | '5m' | '15m' | '1h' | '1D'>('1m')
   const [candles, setCandles] = useState<CandleOHLCV[]>([])
@@ -43,11 +44,6 @@ export const CandleChart: React.FC<CandleChartProps> = ({
     setIsLoading(true)
     const data = await getCandlesService(assetId, timeframe)
     setCandles(data)
-    if (data.length > 0) {
-      setHoveredCandle(data[data.length - 1])
-    } else {
-      setHoveredCandle(null)
-    }
     setIsLoading(false)
   }, [assetId, timeframe])
 
@@ -80,30 +76,33 @@ export const CandleChart: React.FC<CandleChartProps> = ({
       crosshair: {
         mode: CrosshairMode.Normal,
         vertLine: {
-          color: 'rgba(244, 63, 94, 0.5)',
+          color: 'rgba(244, 63, 94, 0.4)',
           width: 1,
           style: LineStyle.Dashed,
           labelBackgroundColor: '#1E293B',
         },
         horzLine: {
-          color: 'rgba(244, 63, 94, 0.5)',
+          color: 'rgba(244, 63, 94, 0.4)',
           width: 1,
           style: LineStyle.Dashed,
           labelBackgroundColor: '#1E293B',
         },
       },
       rightPriceScale: {
-        borderColor: 'rgba(255, 255, 255, 0.1)',
+        borderColor: 'rgba(255, 255, 255, 0.08)',
         autoScale: true,
         scaleMargins: {
-          top: 0.1,
-          bottom: 0.25,
+          top: 0.12,
+          bottom: 0.28,
         },
       },
       timeScale: {
-        borderColor: 'rgba(255, 255, 255, 0.1)',
+        borderColor: 'rgba(255, 255, 255, 0.08)',
         timeVisible: true,
         secondsVisible: false,
+        barSpacing: 12,
+        minBarSpacing: 4,
+        rightOffset: 6,
       },
     })
 
@@ -128,34 +127,37 @@ export const CandleChart: React.FC<CandleChartProps> = ({
 
     candlestickSeriesRef.current = candlestickSeries
 
-    // Add Volume Histogram Series (Lightweight Charts v5 compatibility, bottom 20% height)
+    // Add Volume Histogram Series with separate priceScaleId 'volume' (hidden scale)
     const volumeSeries = (chart as any).addHistogramSeries
       ? (chart as any).addHistogramSeries({
           priceFormat: { type: 'volume' },
-          priceScaleId: '',
+          priceScaleId: 'volume',
         })
       : chart.addSeries(HistogramSeries, {
           priceFormat: { type: 'volume' },
-          priceScaleId: '',
+          priceScaleId: 'volume',
         })
 
-    if (volumeSeries.priceScale) {
-      volumeSeries.priceScale().applyOptions({
-        scaleMargins: {
-          top: 0.8, // Volume occupies bottom 20%
-          bottom: 0,
-        },
-      })
-    }
+    // Configure separate volume price scale to occupy bottom 20% without polluting right Y-axis
+    chart.priceScale('volume').applyOptions({
+      scaleMargins: {
+        top: 0.8,
+        bottom: 0,
+      },
+      visible: false,
+    })
+
     volumeSeriesRef.current = volumeSeries
 
     // Subscribe Crosshair Movement to Update Header OHLC
     chart.subscribeCrosshairMove((param) => {
-      if (!param.time || !param.seriesData) {
+      if (!param.time || !param.seriesData || param.point === undefined || param.point.x < 0 || param.point.y < 0) {
+        setHoveredCandle(null)
         return
       }
+
       const data = param.seriesData.get(candlestickSeries) as any
-      if (data) {
+      if (data && data.open !== undefined) {
         const volumeData = param.seriesData.get(volumeSeries) as any
         const d = new Date((param.time as number) * 1000)
         const timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -169,6 +171,8 @@ export const CandleChart: React.FC<CandleChartProps> = ({
           close: data.close,
           volume: volumeData ? (volumeData.value || 0) : 0,
         })
+      } else {
+        setHoveredCandle(null)
       }
     })
 
@@ -184,10 +188,11 @@ export const CandleChart: React.FC<CandleChartProps> = ({
       window.removeEventListener('resize', handleResize)
       chart.remove()
       chartRef.current = null
+      priceLineRef.current = null
     }
   }, [assetId])
 
-  // Update Series Data on Candles Refresh
+  // Update Series Data on Candles Refresh & Single Last Price Line Update
   useEffect(() => {
     if (!candlestickSeriesRef.current || !volumeSeriesRef.current || candles.length === 0) return
 
@@ -202,22 +207,32 @@ export const CandleChart: React.FC<CandleChartProps> = ({
     const formattedVolume = candles.map((c) => ({
       time: c.time as UTCTimestamp,
       value: c.volume,
-      color: c.close >= c.open ? 'rgba(16, 185, 129, 0.35)' : 'rgba(239, 68, 68, 0.35)',
+      color: c.close >= c.open ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)',
     }))
 
     candlestickSeriesRef.current.setData(formattedCandles)
     volumeSeriesRef.current.setData(formattedVolume)
 
-    // Add / Update Last Price Line
-    if (currentPrice > 0 && candlestickSeriesRef.current && candlestickSeriesRef.current.createPriceLine) {
-      candlestickSeriesRef.current.createPriceLine({
-        price: currentPrice,
-        color: '#F59E0B',
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: '',
-      })
+    // Manage SINGLE Last Price Line (Remove existing line before creating updated line)
+    if (candlestickSeriesRef.current) {
+      if (priceLineRef.current && candlestickSeriesRef.current.removePriceLine) {
+        try {
+          candlestickSeriesRef.current.removePriceLine(priceLineRef.current)
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      if (currentPrice > 0 && candlestickSeriesRef.current.createPriceLine) {
+        priceLineRef.current = candlestickSeriesRef.current.createPriceLine({
+          price: currentPrice,
+          color: '#F59E0B',
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: '',
+        })
+      }
     }
 
     if (chartRef.current) {
@@ -225,8 +240,8 @@ export const CandleChart: React.FC<CandleChartProps> = ({
     }
   }, [candles, currentPrice])
 
-  // Active Candle for Financial Header Display
-  const activeCandle = hoveredCandle || candles[candles.length - 1] || null
+  // Active Candle for Financial Header Display (Defaults to latest candle if mouse outside)
+  const activeCandle = hoveredCandle || (candles.length > 0 ? candles[candles.length - 1] : null)
   const isBullish = activeCandle ? activeCandle.close >= activeCandle.open : true
   const isPositiveChange = change24h >= 0
 
