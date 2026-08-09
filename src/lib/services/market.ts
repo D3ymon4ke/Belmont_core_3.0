@@ -47,13 +47,14 @@ export async function getAssetsService(): Promise<Asset[]> {
         const currentPrice = latestTrade ? parseFloat(latestTrade.price) : parseFloat(asset.current_price || '100')
         const lastTradeAt = latestTrade ? latestTrade.created_at : asset.created_at
 
-        // 2. Fetch real 24h trades statistics
+        // 2. Fetch real 24h trades statistics (MOST RECENT)
         const { data: trades24h } = await (supabase
           .from('trades') as any)
           .select('price, quantity, created_at')
           .eq('asset_id', asset.id)
           .gte('created_at', date24hAgo)
-          .order('created_at', { ascending: true })
+          .order('created_at', { ascending: false })
+          .limit(2000)
 
         let vol24h = 0
         let tradesCount = 0
@@ -61,11 +62,13 @@ export async function getAssetsService(): Promise<Asset[]> {
         let low24h = currentPrice
         let changePct = 0
 
-        if (trades24h && trades24h.length > 0) {
-          tradesCount = trades24h.length
+        const records = (trades24h || []).reverse()
+
+        if (records.length > 0) {
+          tradesCount = records.length
           const prices: number[] = []
 
-          trades24h.forEach((tr: { price: any; quantity: number }) => {
+          records.forEach((tr: { price: any; quantity: number }) => {
             const p = parseFloat(tr.price)
             vol24h += p * tr.quantity
             prices.push(p)
@@ -75,7 +78,7 @@ export async function getAssetsService(): Promise<Asset[]> {
           low24h = Math.min(...prices)
 
           // Compare against oldest trade in 24h window
-          const oldestTradePrice = parseFloat(trades24h[0].price)
+          const oldestTradePrice = parseFloat(records[0].price)
           if (oldestTradePrice > 0) {
             changePct = Number((((currentPrice - oldestTradePrice) / oldestTradePrice) * 100).toFixed(2))
           }
@@ -297,15 +300,15 @@ export async function getCandlesService(
 ): Promise<CandleOHLCV[]> {
   const supabase = createClient()
   try {
-    // Fetch trades ordered ascending by creation date
+    // Fetch MOST RECENT trades ordered descending by creation date
     const { data: rawTrades } = await (supabase
       .from('trades') as any)
       .select('price, quantity, created_at')
       .eq('asset_id', assetId)
-      .order('created_at', { ascending: true })
+      .order('created_at', { ascending: false })
       .limit(2000)
 
-    let records = rawTrades || []
+    let records = (rawTrades || []).reverse()
 
     // Fallback to asset_prices if no trades exist yet
     if (records.length === 0) {
@@ -313,10 +316,10 @@ export async function getCandlesService(
         .from('asset_prices') as any)
         .select('price, volume, created_at')
         .eq('asset_id', assetId)
-        .order('created_at', { ascending: true })
+        .order('created_at', { ascending: false })
         .limit(500)
 
-      records = (rawPrices || []).map((p: any) => ({
+      records = (rawPrices || []).reverse().map((p: any) => ({
         price: p.price,
         quantity: p.volume || 1,
         created_at: p.created_at,
@@ -360,12 +363,14 @@ export async function getCandlesService(
 
     const candles: CandleOHLCV[] = []
     for (const [sec, bucket] of groupedMap.entries()) {
-      const prices = bucket.items.map((i) => parseFloat(i.price))
+      const prices = bucket.items.map((i) => parseFloat(i.price)).filter((p) => !isNaN(p))
+      if (prices.length === 0) continue
+
       const open = prices[0]
       const close = prices[prices.length - 1]
       const high = Math.max(...prices)
       const low = Math.min(...prices)
-      const volume = bucket.items.reduce((sum, i) => sum + (parseFloat(i.price) * i.quantity), 0)
+      const volume = bucket.items.reduce((sum, i) => sum + (parseFloat(i.price || 0) * (i.quantity || 0)), 0)
 
       const d = new Date(sec * 1000)
       const timeStr = timeframe === '1D'
