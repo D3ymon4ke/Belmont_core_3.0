@@ -1,27 +1,24 @@
 import { createClient } from '@/lib/supabase/client'
-import { Asset, AssetPrice, Order, Trade, Holding, MarketAgent } from '@/types'
+import { Asset, Order, Holding, Trade } from '@/types'
 
-export interface Candle {
-  time: string
-  timestamp: number
+export interface CandleOHLCV {
+  time: number // Unix timestamp in seconds
+  timeStr: string // Formatted display time
   open: number
   high: number
   low: number
   close: number
   volume: number
-  count: number
 }
 
 export interface MarketStatus {
   isActive: boolean
   lastTradeAt: string | null
   statusText: string
-  tradeCount24h: number
-  volume24h: number
 }
 
 /**
- * Fetch All Active Assets in Bolsa Belmont with Unified Source of Truth (`last_trade_price`) & 24h Stats
+ * Fetch All Active Assets with Unified Source of Truth (`currentMarketPrice`) & 24h Stats
  */
 export async function getAssetsService(): Promise<Asset[]> {
   const supabase = createClient()
@@ -38,7 +35,7 @@ export async function getAssetsService(): Promise<Asset[]> {
 
     const enrichedAssets = await Promise.all(
       assets.map(async (asset: Asset) => {
-        // 1. Single Source of Truth: Get LATEST executed trade price
+        // 1. Single Source of Truth: LATEST executed trade price
         const { data: latestTrade } = await (supabase
           .from('trades') as any)
           .select('price, created_at')
@@ -50,12 +47,13 @@ export async function getAssetsService(): Promise<Asset[]> {
         const currentPrice = latestTrade ? latestTrade.price : asset.current_price
         const lastTradeAt = latestTrade ? latestTrade.created_at : asset.created_at
 
-        // 2. Fetch real 24h trades statistics directly from executed trades
+        // 2. Fetch real 24h trades statistics
         const { data: trades24h } = await (supabase
           .from('trades') as any)
           .select('price, quantity, created_at')
           .eq('asset_id', asset.id)
           .gte('created_at', date24hAgo)
+          .order('created_at', { ascending: true })
 
         let vol24h = 0
         let tradesCount = 0
@@ -75,7 +73,7 @@ export async function getAssetsService(): Promise<Asset[]> {
           high24h = Math.max(...prices)
           low24h = Math.min(...prices)
 
-          // Oldest trade in 24h window to calculate percentage change
+          // Compare against oldest trade in 24h window
           const oldestTradePrice = trades24h[0].price
           if (oldestTradePrice > 0) {
             changePct = Number((((currentPrice - oldestTradePrice) / oldestTradePrice) * 100).toFixed(2))
@@ -189,38 +187,21 @@ export async function getUserOrdersService(userId?: string): Promise<Order[]> {
 }
 
 /**
- * Fetch Recent Trade History with Buyer / Seller Agent or Profile Names
+ * Fetch Recent Trade History
  */
 export async function getTradeHistoryService(assetId?: string): Promise<Trade[]> {
   const supabase = createClient()
   try {
-    let query = (supabase.from('trades') as any).select('*, asset:assets(*)').order('created_at', { ascending: false }).limit(30)
+    let query = (supabase.from('trades') as any).select('*, asset:assets(*)').order('created_at', { ascending: false }).limit(25)
     if (assetId) query = query.eq('asset_id', assetId)
 
     const { data, error } = await query
     if (error || !data) return []
 
-    // Fetch market agents to enrich trade participant names
-    const { data: agents } = await (supabase.from('market_agents') as any).select('id, name')
-    const agentMap = new Map<string, string>()
-    if (agents) {
-      agents.forEach((a: { id: string; name: string }) => agentMap.set(a.id, a.name))
-    }
-
-    return (data as Trade[]).map((tr) => {
-      let buyerName = 'NPC Market Maker'
-      let sellerName = 'NPC Market Maker'
-
-      if (tr.buyer_id) buyerName = 'Membro Belmont'
-      if (tr.seller_id) sellerName = 'Membro Belmont'
-
-      return {
-        ...tr,
-        buyer_name: buyerName,
-        seller_name: sellerName,
-        side: tr.buyer_id ? 'buy' : 'sell',
-      }
-    })
+    return (data as Trade[]).map((tr) => ({
+      ...tr,
+      side: tr.buyer_id ? 'buy' : 'sell',
+    }))
   } catch (e) {
     return []
   }
@@ -275,7 +256,7 @@ export async function createOrderService(
 
     if (error) return { success: false, error: error.message }
 
-    // Trigger Database Matching Engine RPC
+    // Execute matching engine
     await (supabase as any).rpc('match_orders_for_asset', { p_asset_id: assetId })
 
     return { success: true }
@@ -299,33 +280,32 @@ export async function cancelOrderService(orderId: string): Promise<{ success: bo
 }
 
 /**
- * Fetch Real Candlesticks aggregated by Timeframe from Trades
+ * Fetch Real Candlesticks aggregated strictly from Executed Trades for Lightweight Charts
  */
 export async function getCandlesService(
   assetId: string,
-  timeframe: '1m' | '5m' | '15m' | '1h' | '1D',
-  currentPrice: number
-): Promise<Candle[]> {
+  timeframe: '1m' | '5m' | '15m' | '1h' | '1D'
+): Promise<CandleOHLCV[]> {
   const supabase = createClient()
   try {
-    // 1. Fetch trades for asset
+    // Fetch trades ordered ascending by creation date
     const { data: rawTrades } = await (supabase
       .from('trades') as any)
       .select('price, quantity, created_at')
       .eq('asset_id', assetId)
       .order('created_at', { ascending: true })
-      .limit(1000)
+      .limit(2000)
 
     let records = rawTrades || []
 
-    // Fallback to asset_prices if trades table has no history yet
+    // Fallback to asset_prices if no trades exist yet
     if (records.length === 0) {
       const { data: rawPrices } = await (supabase
         .from('asset_prices') as any)
         .select('price, volume, created_at')
         .eq('asset_id', assetId)
         .order('created_at', { ascending: true })
-        .limit(300)
+        .limit(500)
 
       records = (rawPrices || []).map((p: any) => ({
         price: p.price,
@@ -334,92 +314,81 @@ export async function getCandlesService(
       }))
     }
 
-    if (records.length === 0) {
-      return []
-    }
+    if (records.length === 0) return []
 
-    // Map timeframe to visible count limit
-    const timeframeLimits: Record<string, number> = {
+    // Timeframe bucket sizes in seconds
+    const intervalSecondsMap: Record<string, number> = {
       '1m': 60,
-      '5m': 120,
+      '5m': 300,
+      '15m': 900,
+      '1h': 3600,
+      '1D': 86400,
+    }
+    const intervalSec = intervalSecondsMap[timeframe] || 60
+
+    // Target visible candles limit per timeframe
+    const limitMap: Record<string, number> = {
+      '1m': 60,
+      '5m': 72,
       '15m': 96,
       '1h': 72,
       '1D': 90,
     }
-    const maxVisibleCandles = timeframeLimits[timeframe] || 60
+    const maxCount = limitMap[timeframe] || 60
 
-    // Group into time-buckets
-    const groupedMap = new Map<string, { label: string; timestamp: number; items: any[] }>()
+    const groupedMap = new Map<number, { unixSec: number; items: any[] }>()
 
     records.forEach((rec: any) => {
-      const d = new Date(rec.created_at)
-      let bucketKey: string
-      let label: string
+      const ms = new Date(rec.created_at).getTime()
+      const unixSec = Math.floor(ms / 1000)
+      const bucketSec = Math.floor(unixSec / intervalSec) * intervalSec
 
-      if (timeframe === '1m') {
-        const minStr = String(d.getMinutes()).padStart(2, '0')
-        bucketKey = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()} ${d.getHours()}:${minStr}`
-        label = `${d.getHours()}:${minStr}`
-      } else if (timeframe === '5m') {
-        const min = Math.floor(d.getMinutes() / 5) * 5
-        const minStr = String(min).padStart(2, '0')
-        bucketKey = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()} ${d.getHours()}:${minStr}`
-        label = `${d.getHours()}:${minStr}`
-      } else if (timeframe === '15m') {
-        const min = Math.floor(d.getMinutes() / 15) * 15
-        const minStr = String(min).padStart(2, '0')
-        bucketKey = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()} ${d.getHours()}:${minStr}`
-        label = `${d.getHours()}:${minStr}`
-      } else if (timeframe === '1h') {
-        bucketKey = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()} ${d.getHours()}:00`
-        label = `${d.getHours()}:00`
-      } else {
-        bucketKey = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`
-        label = `${d.getDate()}/${d.getMonth() + 1}`
+      if (!groupedMap.has(bucketSec)) {
+        groupedMap.set(bucketSec, { unixSec: bucketSec, items: [] })
       }
-
-      if (!groupedMap.has(bucketKey)) {
-        groupedMap.set(bucketKey, { label, timestamp: d.getTime(), items: [] })
-      }
-      groupedMap.get(bucketKey)!.items.push(rec)
+      groupedMap.get(bucketSec)!.items.push(rec)
     })
 
-    const realCandles: Candle[] = []
-    for (const [, bucket] of groupedMap.entries()) {
+    const candles: CandleOHLCV[] = []
+    for (const [sec, bucket] of groupedMap.entries()) {
       const prices = bucket.items.map((i) => i.price)
       const open = prices[0]
       const close = prices[prices.length - 1]
       const high = Math.max(...prices)
       const low = Math.min(...prices)
-      const vol = bucket.items.reduce((sum, i) => sum + (i.price * i.quantity), 0)
+      const volume = bucket.items.reduce((sum, i) => sum + (i.price * i.quantity), 0)
 
-      realCandles.push({
-        time: bucket.label,
-        timestamp: bucket.timestamp,
+      const d = new Date(sec * 1000)
+      const timeStr = timeframe === '1D'
+        ? `${d.getDate()}/${d.getMonth() + 1}`
+        : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+
+      candles.push({
+        time: sec,
+        timeStr,
         open,
         high,
         low,
         close,
-        volume: vol,
-        count: bucket.items.length,
+        volume,
       })
     }
 
-    return realCandles.slice(-maxVisibleCandles)
+    return candles.slice(-maxCount)
   } catch (e) {
     return []
   }
 }
 
 /**
- * Fetch Market Activity Status (Determined by trade recency)
+ * Fetch Market Activity Status
  */
 export async function getMarketStatusService(assetId: string): Promise<MarketStatus> {
   const supabase = createClient()
   try {
     const { data: latestTrade } = await (supabase
       .from('trades') as any)
-      .select('created_at, price')
+      .select('created_at')
       .eq('asset_id', assetId)
       .order('created_at', { ascending: false })
       .limit(1)
@@ -428,64 +397,18 @@ export async function getMarketStatusService(assetId: string): Promise<MarketSta
     const now = Date.now()
     const lastTradeTime = latestTrade ? new Date(latestTrade.created_at).getTime() : 0
     const diffMs = now - lastTradeTime
-
-    // Market considered active if last trade executed within 5 minutes (300,000ms)
     const isActive = lastTradeTime > 0 && diffMs <= 300000
 
     return {
       isActive,
       lastTradeAt: latestTrade ? latestTrade.created_at : null,
       statusText: isActive ? 'MERCADO ATIVO' : 'SEM NEGOCIAÇÕES RECENTES',
-      tradeCount24h: 0,
-      volume24h: 0,
     }
   } catch (e) {
     return {
       isActive: false,
       lastTradeAt: null,
       statusText: 'SEM NEGOCIAÇÕES RECENTES',
-      tradeCount24h: 0,
-      volume24h: 0,
     }
-  }
-}
-
-/**
- * Fetch Recent Trades Executed by Market Agent NPCs
- */
-export async function getNpcParticipantsService(): Promise<{ id: string; agentName: string; side: 'buy' | 'sell'; assetSymbol: string; price: number; quantity: number; createdAt: string }[]> {
-  const supabase = createClient()
-  try {
-    const { data: agents } = await (supabase.from('market_agents') as any).select('id, name')
-    if (!agents || agents.length === 0) return []
-
-    const agentNames = agents.map((a: { name: string }) => a.name)
-
-    // Fetch recent trades where buyer_id or seller_id is null (NPC trade)
-    const { data: trades } = await (supabase
-      .from('trades') as any)
-      .select('id, price, quantity, created_at, asset:assets(symbol)')
-      .or('buyer_id.is.null,seller_id.is.null')
-      .order('created_at', { ascending: false })
-      .limit(10)
-
-    if (!trades) return []
-
-    return trades.map((t: any, idx: number) => {
-      const agentName = agentNames[idx % agentNames.length] || 'Victor Belmont'
-      const side = idx % 2 === 0 ? 'buy' : 'sell'
-
-      return {
-        id: t.id,
-        agentName,
-        side,
-        assetSymbol: t.asset?.symbol || 'BELMONT',
-        price: t.price,
-        quantity: t.quantity,
-        createdAt: t.created_at,
-      }
-    })
-  } catch (e) {
-    return []
   }
 }

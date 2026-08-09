@@ -2,8 +2,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  TrendingUp,
-  TrendingDown,
   BarChart3,
   Coins,
   ArrowUpRight,
@@ -16,16 +14,12 @@ import {
   XCircle,
   Activity,
   Layers,
-  Users,
-  Shield,
-  Clock,
   Info,
+  ChevronRight,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { Skeleton } from '@/components/ui/Skeleton'
-import { EmptyState } from '@/components/ui/EmptyState'
 import { CandleChart } from '@/components/market/CandleChart'
 import {
   getAssetsService,
@@ -36,7 +30,6 @@ import {
   createOrderService,
   cancelOrderService,
   getMarketStatusService,
-  getNpcParticipantsService,
   MarketStatus,
 } from '@/lib/services/market'
 import { createClient } from '@/lib/supabase/client'
@@ -56,7 +49,6 @@ export default function MarketPage() {
   const [holdings, setHoldings] = useState<Holding[]>([])
   const [userOrders, setUserOrders] = useState<Order[]>([])
   const [trades, setTrades] = useState<Trade[]>([])
-  const [npcTrades, setNpcTrades] = useState<{ id: string; agentName: string; side: 'buy' | 'sell'; assetSymbol: string; price: number; quantity: number; createdAt: string }[]>([])
   const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null)
   const [userCoins, setUserCoins] = useState<number>(0)
   const [isLoading, setIsLoading] = useState(true)
@@ -72,13 +64,12 @@ export default function MarketPage() {
 
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
-  // Fetch complete market state
+  // Single Source of Truth Fetch Function
   const loadMarketData = useCallback(async () => {
     try {
       const activeAssets = await getAssetsService()
       setAssets(activeAssets)
 
-      // Retain currently selected asset or fallback to first
       let current = selectedAsset
         ? activeAssets.find((a) => a.id === selectedAsset.id) || activeAssets[0] || null
         : activeAssets[0] || null
@@ -96,10 +87,6 @@ export default function MarketPage() {
         setMarketStatus(mktStatus)
       }
 
-      const npcs = await getNpcParticipantsService()
-      setNpcTrades(npcs)
-
-      // Fetch User Portfolio & Profile Coins
       const { data: { user } } = await supabase.auth.getUser()
       if (user) {
         const userHoldings = await getUserHoldingsService(user.id)
@@ -122,37 +109,31 @@ export default function MarketPage() {
 
   useEffect(() => {
     loadMarketData()
-
-    // 7-second Polling Cycle for Smart Refresh
-    const intervalId = setInterval(() => {
-      loadMarketData()
-    }, 7000)
-
+    // 6-second Polling Cycle
+    const intervalId = setInterval(loadMarketData, 6000)
     return () => clearInterval(intervalId)
   }, [loadMarketData])
 
-  // Handle Asset Switch
   const handleSelectAsset = (asset: Asset) => {
     setSelectedAsset(asset)
     setPriceInput(asset.current_price.toString())
     setQuantityInput('')
   }
 
-  // Set default price when asset changes or side/type changes
+  // Update default form price when market or asset changes
   useEffect(() => {
     if (selectedAsset) {
       if (orderType === 'market') {
-        const topPrice = orderSide === 'buy'
+        const estPrice = orderSide === 'buy'
           ? (orderBook.sellOrders[0]?.price || selectedAsset.current_price)
           : (orderBook.buyOrders[0]?.price || selectedAsset.current_price)
-        setPriceInput(topPrice.toString())
+        setPriceInput(estPrice.toString())
       } else if (!priceInput || priceInput === '0') {
         setPriceInput(selectedAsset.current_price.toString())
       }
     }
   }, [selectedAsset, orderSide, orderType, orderBook])
 
-  // Max Quantity Calculator
   const handleSetMaxQuantity = () => {
     if (!selectedAsset) return
     const price = parseInt(priceInput) || selectedAsset.current_price || 1
@@ -165,7 +146,6 @@ export default function MarketPage() {
     }
   }
 
-  // Handle Order Submission
   const handlePlaceOrder = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedAsset) return
@@ -182,7 +162,7 @@ export default function MarketPage() {
     if (res.success) {
       setFeedback({
         type: 'success',
-        message: `Ordem de ${orderSide === 'buy' ? 'COMPRA' : 'VENDA'} (${orderType.toUpperCase()}) registrada com sucesso!`,
+        message: `Ordem de ${orderSide === 'buy' ? 'COMPRA' : 'VENDA'} registrada com sucesso!`,
       })
       setQuantityInput('')
       await loadMarketData()
@@ -192,11 +172,10 @@ export default function MarketPage() {
     setTimeout(() => setFeedback(null), 4000)
   }
 
-  // Handle Order Cancellation
   const handleCancelOrder = async (orderId: string) => {
     const res = await cancelOrderService(orderId)
     if (res.success) {
-      setFeedback({ type: 'success', message: 'Ordem cancelada e saldo estornado com sucesso!' })
+      setFeedback({ type: 'success', message: 'Ordem cancelada com sucesso!' })
       await loadMarketData()
     } else {
       setFeedback({ type: 'error', message: res.error || 'Falha ao cancelar ordem.' })
@@ -204,70 +183,23 @@ export default function MarketPage() {
     setTimeout(() => setFeedback(null), 4000)
   }
 
-  // Orderbook Spread Calculations
   const bestBid = orderBook.buyOrders[0]?.price || 0
   const bestAsk = orderBook.sellOrders[0]?.price || 0
   const spread = bestAsk > 0 && bestBid > 0 ? Math.max(0, bestAsk - bestBid) : 0
-
   const calculatedCost = (parseInt(priceInput) || 0) * (parseInt(quantityInput) || 0)
 
   const userHoldingForSelected = holdings.find((h) => h.asset_id === selectedAsset?.id)
   const totalHoldingsValue = holdings.reduce((sum, h) => sum + h.quantity * (h.asset?.current_price || 0), 0)
 
-  // Filtered Orders List
   const filteredUserOrders = userOrders.filter((ord) => {
     if (ordersFilter === 'all') return true
     return ord.status === ordersFilter
   })
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6 animate-fadeIn pb-12 font-sans select-none">
-      {/* Header & Terminal Banner */}
-      <div className="glass-card rounded-3xl p-6 sm:p-8 border border-belmont-border relative overflow-hidden bg-mansion-radial">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-belmont-crimson/15 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-xs font-semibold text-amber-300">
-                <BarChart3 className="w-3.5 h-3.5" />
-                <span>Terminal Financeiro Belmont Core 2.0</span>
-              </div>
-              {marketStatus && (
-                <span
-                  className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full border ${
-                    marketStatus.isActive
-                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                      : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
-                  }`}
-                >
-                  <Activity className={`w-3.5 h-3.5 ${marketStatus.isActive ? 'animate-pulse' : ''}`} />
-                  {marketStatus.statusText}
-                </span>
-              )}
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold font-display tracking-tight text-belmont-text-primary">
-              Bolsa Belmont
-            </h1>
-            <p className="text-xs sm:text-sm text-belmont-text-secondary max-w-xl">
-              Cotações reais derivadas diretamente do Market Engine & Trades do Supabase. Liquidez garantida com livro de ofertas transparente.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-4 bg-belmont-surface/90 p-4 rounded-2xl border border-belmont-border shadow-lg">
-            <div className="w-11 h-11 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
-              <Briefcase className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-[10px] text-belmont-text-muted font-bold uppercase tracking-wider">Investimentos Totais</p>
-              <p className="text-xl font-extrabold text-amber-300 font-display">{totalHoldingsValue} Coins</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Asset Ticker Cards Row (Requirement 19 & 23: Mobile Scrollable) */}
-      <div className="flex overflow-x-auto gap-3 pb-2 scrollbar-thin scrollbar-thumb-belmont-border">
+    <div className="max-w-7xl mx-auto space-y-4 animate-fadeIn pb-12 font-sans select-none">
+      {/* 1. Ticker Row (Section 15: Compact Header Selector) */}
+      <div className="flex overflow-x-auto gap-2 pb-1 scrollbar-thin scrollbar-thumb-belmont-border">
         {assets.map((asset) => {
           const isSelected = selectedAsset?.id === asset.id
           const isPositive = asset.change_24h >= 0
@@ -275,210 +207,56 @@ export default function MarketPage() {
             <button
               key={asset.id}
               onClick={() => handleSelectAsset(asset)}
-              className={`min-w-[140px] flex-1 p-3.5 rounded-2xl border transition-all text-left space-y-1.5 shrink-0 ${
+              className={`min-w-[130px] flex-1 p-2.5 rounded-xl border transition-all text-left space-y-1 shrink-0 ${
                 isSelected
-                  ? 'bg-belmont-crimson/25 border-belmont-rose text-white shadow-belmont-glow scale-102'
+                  ? 'bg-belmont-crimson/30 border-belmont-rose text-white shadow-belmont-glow font-bold'
                   : 'glass-panel border-belmont-border/70 hover:border-belmont-rose/40 text-belmont-text-secondary'
               }`}
             >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold font-display tracking-wider text-belmont-text-primary">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-mono tracking-wider font-bold text-belmont-text-primary">
                   {asset.symbol}
                 </span>
                 <span className={`text-[10px] font-bold ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>
                   {isPositive ? `+${asset.change_24h}%` : `${asset.change_24h}%`}
                 </span>
               </div>
-              <p className="text-sm font-extrabold text-amber-300 font-display">{asset.current_price} Coins</p>
+              <p className="text-sm font-extrabold text-amber-300 font-mono">{asset.current_price} Coins</p>
             </button>
           )
         })}
       </div>
 
-      {/* Main Terminal Area */}
+      {/* 2. Main Terminal Grid: Side-by-Side (Chart Left 68% + Book & Form Right 32%) */}
       {selectedAsset && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left 2 Columns: Asset Header + Chart + Order Book + Recent Trades */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Asset Header Bar & 24h Market Statistics (Requirement 1, 18 & 19) */}
-            <div className="glass-panel p-5 rounded-3xl border border-belmont-border space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-belmont-border">
-                <div>
-                  <h2 className="text-xl font-bold font-display text-belmont-text-primary flex items-center gap-2">
-                    {selectedAsset.name}
-                    <span className="px-2 py-0.5 rounded-md bg-belmont-surface border border-belmont-border text-xs text-amber-300 font-mono">
-                      {selectedAsset.symbol}
-                    </span>
-                  </h2>
-                  <p className="text-xs text-belmont-text-muted mt-0.5">{selectedAsset.description}</p>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
-                    <p className="text-[10px] text-belmont-text-muted font-bold uppercase">Cotação Atual (Last Trade)</p>
-                    <p className="text-2xl font-extrabold text-amber-300 font-display">{selectedAsset.current_price} Coins</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* 24h Financial Stats Bar */}
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs font-mono">
-                <div className="p-2.5 rounded-xl bg-belmont-surface/50 border border-belmont-border/70">
-                  <p className="text-[10px] text-belmont-text-muted font-bold uppercase">Variação 24h</p>
-                  <p className={`font-bold ${selectedAsset.change_24h >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                    {selectedAsset.change_24h >= 0 ? `+${selectedAsset.change_24h}%` : `${selectedAsset.change_24h}%`}
-                  </p>
-                </div>
-
-                <div className="p-2.5 rounded-xl bg-belmont-surface/50 border border-belmont-border/70">
-                  <p className="text-[10px] text-belmont-text-muted font-bold uppercase">Máxima 24h</p>
-                  <p className="font-bold text-emerald-400">{selectedAsset.high_24h || selectedAsset.current_price} Coins</p>
-                </div>
-
-                <div className="p-2.5 rounded-xl bg-belmont-surface/50 border border-belmont-border/70">
-                  <p className="text-[10px] text-belmont-text-muted font-bold uppercase">Mínima 24h</p>
-                  <p className="font-bold text-red-400">{selectedAsset.low_24h || selectedAsset.current_price} Coins</p>
-                </div>
-
-                <div className="p-2.5 rounded-xl bg-belmont-surface/50 border border-belmont-border/70">
-                  <p className="text-[10px] text-belmont-text-muted font-bold uppercase">Volume 24h Real</p>
-                  <p className="font-bold text-amber-300">{selectedAsset.volume_24h?.toLocaleString('pt-BR') || 0} Coins</p>
-                </div>
-
-                <div className="p-2.5 rounded-xl bg-belmont-surface/50 border border-belmont-border/70 col-span-2 sm:col-span-1">
-                  <p className="text-[10px] text-belmont-text-muted font-bold uppercase">Trades 24h</p>
-                  <p className="font-bold text-belmont-text-primary">{selectedAsset.trades_24h_count || 0} negócios</p>
-                </div>
-              </div>
-            </div>
-
-            {/* TradingView-Style Candlestick Chart Component (Requirement 3 to 12) */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          {/* Left Column (8/12 = ~68% width): Chart + Recent Trades */}
+          <div className="lg:col-span-8 space-y-4">
+            {/* Lightweight Charts Component */}
             <CandleChart
               assetId={selectedAsset.id}
               currentPrice={selectedAsset.current_price}
               assetSymbol={selectedAsset.symbol}
+              change24h={selectedAsset.change_24h}
             />
 
-            {/* Professional Order Book with Depth Fill Bars (Requirement 14) */}
-            <div className="glass-panel rounded-3xl p-6 border border-belmont-border space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-belmont-border">
-                <h3 className="text-sm font-bold font-display text-belmont-text-primary uppercase tracking-wider flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-belmont-rose" />
-                  Livro de Ofertas (Order Book)
+            {/* Recent Executed Trades Table (Section 17) */}
+            <div className="glass-panel rounded-2xl p-4 border border-belmont-border space-y-3 bg-slate-950/50">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold font-mono text-belmont-text-primary uppercase tracking-wider flex items-center gap-2">
+                  <History className="w-3.5 h-3.5 text-amber-400" />
+                  Últimos Negócios Realizados ({selectedAsset.symbol})
                 </h3>
-
-                <button
-                  onClick={loadMarketData}
-                  className="p-1.5 text-belmont-text-muted hover:text-white rounded-lg transition-colors flex items-center gap-1 text-xs"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" /> Atualizar
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs font-mono">
-                {/* Buy Orders (Bids) */}
-                <div className="space-y-1.5 bg-emerald-500/5 p-3.5 rounded-2xl border border-emerald-500/20">
-                  <div className="flex items-center justify-between font-bold text-emerald-400 pb-2 border-b border-emerald-500/20 text-[11px]">
-                    <span>COMPRAS (BIDS)</span>
-                    <span>PREÇO / QTD / TOTAL</span>
-                  </div>
-
-                  {orderBook.buyOrders.length === 0 ? (
-                    <p className="text-[11px] text-belmont-text-muted text-center py-6 font-sans">Sem ofertas de compra ativas.</p>
-                  ) : (
-                    orderBook.buyOrders.map((ord) => {
-                      const remaining = ord.quantity - ord.filled_quantity
-                      const totalVal = ord.price * remaining
-                      const depthPct = Math.min(100, Math.max(5, (remaining / orderBook.maxQuantity) * 100))
-
-                      return (
-                        <div
-                          key={ord.id}
-                          className="relative flex items-center justify-between p-1.5 rounded-lg overflow-hidden group"
-                        >
-                          {/* Relative Depth Fill Bar */}
-                          <div
-                            className="absolute right-0 top-0 bottom-0 bg-emerald-500/15 transition-all pointer-events-none"
-                            style={{ width: `${depthPct}%` }}
-                          />
-                          <span className="font-bold text-emerald-400 z-10">{ord.price} Coins</span>
-                          <div className="flex items-center gap-3 text-belmont-text-secondary z-10 text-[11px]">
-                            <span>{remaining} un</span>
-                            <span className="text-belmont-text-muted font-normal">{totalVal} Coins</span>
-                          </div>
-                        </div>
-                      )
-                    })
-                  )}
-                </div>
-
-                {/* Sell Orders (Asks) */}
-                <div className="space-y-1.5 bg-red-500/5 p-3.5 rounded-2xl border border-red-500/20">
-                  <div className="flex items-center justify-between font-bold text-red-400 pb-2 border-b border-red-500/20 text-[11px]">
-                    <span>VENDAS (ASKS)</span>
-                    <span>PREÇO / QTD / TOTAL</span>
-                  </div>
-
-                  {orderBook.sellOrders.length === 0 ? (
-                    <p className="text-[11px] text-belmont-text-muted text-center py-6 font-sans">Sem ofertas de venda ativas.</p>
-                  ) : (
-                    orderBook.sellOrders.map((ord) => {
-                      const remaining = ord.quantity - ord.filled_quantity
-                      const totalVal = ord.price * remaining
-                      const depthPct = Math.min(100, Math.max(5, (remaining / orderBook.maxQuantity) * 100))
-
-                      return (
-                        <div
-                          key={ord.id}
-                          className="relative flex items-center justify-between p-1.5 rounded-lg overflow-hidden group"
-                        >
-                          {/* Relative Depth Fill Bar */}
-                          <div
-                            className="absolute right-0 top-0 bottom-0 bg-red-500/15 transition-all pointer-events-none"
-                            style={{ width: `${depthPct}%` }}
-                          />
-                          <span className="font-bold text-red-400 z-10">{ord.price} Coins</span>
-                          <div className="flex items-center gap-3 text-belmont-text-secondary z-10 text-[11px]">
-                            <span>{remaining} un</span>
-                            <span className="text-belmont-text-muted font-normal">{totalVal} Coins</span>
-                          </div>
-                        </div>
-                      )
-                    })
-                  )}
-                </div>
-              </div>
-
-              {/* Spread Indicator Bar */}
-              <div className="p-3 rounded-2xl bg-belmont-surface/90 border border-belmont-border flex items-center justify-between text-xs font-mono">
-                <span className="text-belmont-text-secondary">
-                  Melhor Bid: <strong className="text-emerald-400">{bestBid || '—'} Coins</strong>
-                </span>
-                <span className="text-amber-300 font-bold px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20">
-                  SPREAD: {spread} Coins
-                </span>
-                <span className="text-belmont-text-secondary">
-                  Melhor Ask: <strong className="text-red-400">{bestAsk || '—'} Coins</strong>
+                <span className="text-[10px] text-belmont-text-muted font-mono">
+                  Somente Trades Executados
                 </span>
               </div>
-            </div>
-
-            {/* Recent Executed Trades Table (Requirement 17) */}
-            <div className="glass-panel rounded-3xl p-6 border border-belmont-border space-y-4">
-              <h3 className="text-sm font-bold font-display text-belmont-text-primary uppercase tracking-wider flex items-center gap-2">
-                <History className="w-4 h-4 text-amber-400" />
-                Últimos Negócios Executados ({selectedAsset.symbol})
-              </h3>
 
               {trades.length === 0 ? (
-                <EmptyState
-                  icon={<History className="w-5 h-5 text-amber-400" />}
-                  title="Aguardando negociações no mercado."
-                  description="Os trades reais executados pelo Engine aparecerão aqui."
-                />
+                <p className="text-xs text-belmont-text-muted text-center py-4 font-mono">Aguardando execuções no mercado.</p>
               ) : (
-                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                  {trades.map((tr) => {
+                <div className="space-y-1 max-h-52 overflow-y-auto pr-1 font-mono text-xs">
+                  {trades.slice(0, 10).map((tr) => {
                     const totalValue = tr.price * tr.quantity
                     const timeStr = new Date(tr.created_at).toLocaleTimeString('pt-BR', {
                       hour: '2-digit',
@@ -489,18 +267,18 @@ export default function MarketPage() {
                     return (
                       <div
                         key={tr.id}
-                        className="p-3 rounded-xl bg-belmont-surface/40 border border-belmont-border/60 flex items-center justify-between text-xs font-mono"
+                        className="p-2 rounded-lg bg-belmont-surface/30 border border-belmont-border/50 flex items-center justify-between"
                       >
                         <div className="flex items-center gap-3">
                           <span className="text-belmont-text-muted text-[11px]">{timeStr}</span>
-                          <span className="font-bold text-amber-300">{tr.price.toFixed(2)} Coins</span>
+                          <span className="font-bold text-amber-300">{tr.price.toFixed(2)}</span>
                         </div>
-                        <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-4 text-[11px]">
                           <span className="text-belmont-text-secondary">{tr.quantity} un</span>
                           <span className="font-bold text-belmont-text-primary">{totalValue.toLocaleString('pt-BR')} Coins</span>
-                          <Badge variant={tr.side === 'buy' ? 'success' : 'crimson'} size="sm">
+                          <span className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${tr.side === 'buy' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
                             {tr.side === 'buy' ? 'BUY' : 'SELL'}
-                          </Badge>
+                          </span>
                         </div>
                       </div>
                     )
@@ -508,124 +286,128 @@ export default function MarketPage() {
                 </div>
               )}
             </div>
-
-            {/* NPC Participants Section (Requirement 21) */}
-            <div className="glass-panel rounded-3xl p-6 border border-belmont-border space-y-4">
-              <h3 className="text-sm font-bold font-display text-belmont-text-primary uppercase tracking-wider flex items-center gap-2">
-                <Users className="w-4 h-4 text-belmont-rose" />
-                Atividade dos Participantes NPC (Market Makers)
-              </h3>
-
-              {npcTrades.length === 0 ? (
-                <p className="text-xs text-belmont-text-muted">Aguardando ofertas dos agentes autônomos.</p>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {npcTrades.slice(0, 6).map((npc) => (
-                    <div
-                      key={npc.id}
-                      className="p-3 rounded-2xl bg-belmont-surface/50 border border-belmont-border space-y-1 text-xs"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-belmont-text-primary">{npc.agentName}</span>
-                        <Badge variant={npc.side === 'buy' ? 'success' : 'crimson'} size="sm">
-                          {npc.side === 'buy' ? 'COMPRA' : 'VENDA'}
-                        </Badge>
-                      </div>
-                      <p className="text-belmont-text-secondary text-[11px]">
-                        {npc.quantity} {npc.assetSymbol} @ <strong className="text-amber-300">{npc.price} Coins</strong>
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
           </div>
 
-          {/* Right Column: Order Placement Form & My Orders */}
-          <div className="space-y-6">
-            {/* Enhanced Order Placement Form (Requirement 15) */}
-            <div className="glass-panel rounded-3xl p-6 border border-belmont-border space-y-4">
-              <h3 className="text-sm font-bold font-display text-belmont-text-primary uppercase tracking-wider flex items-center justify-between">
-                <span>Emitir Ordem</span>
-                <span className="text-xs text-amber-300 font-mono font-bold">
-                  {orderSide === 'buy' ? `${userCoins} Coins Disponíveis` : `${userHoldingForSelected?.quantity || 0} un Disponíveis`}
-                </span>
-              </h3>
+          {/* Right Column (4/12 = ~32% width): Order Book + Compact Order Form */}
+          <div className="lg:col-span-4 space-y-4">
+            {/* Book de Ofertas Compacto (Section 16) */}
+            <div className="glass-panel rounded-2xl p-4 border border-belmont-border space-y-3 bg-slate-950/60 font-mono text-xs">
+              <div className="flex items-center justify-between pb-2 border-b border-belmont-border/70">
+                <h3 className="text-xs font-bold text-belmont-text-primary uppercase tracking-wider flex items-center gap-1.5">
+                  <Layers className="w-3.5 h-3.5 text-belmont-rose" />
+                  Livro de Ofertas
+                </h3>
+                <button onClick={loadMarketData} className="text-belmont-text-muted hover:text-white transition-colors">
+                  <RefreshCw className="w-3 h-3" />
+                </button>
+              </div>
 
+              {/* Asks (Sell Orders - Top Red) */}
+              <div className="space-y-1">
+                <div className="flex justify-between text-[10px] text-red-400 font-bold pb-1">
+                  <span>ASKS (VENDA)</span>
+                  <span>PREÇO / QTD</span>
+                </div>
+                {orderBook.sellOrders.length === 0 ? (
+                  <p className="text-[10px] text-belmont-text-muted text-center py-2">Sem ordens de venda</p>
+                ) : (
+                  orderBook.sellOrders.slice(0, 4).map((ord) => {
+                    const remaining = ord.quantity - ord.filled_quantity
+                    const depthPct = Math.min(100, Math.max(5, (remaining / orderBook.maxQuantity) * 100))
+                    return (
+                      <div key={ord.id} className="relative flex items-center justify-between p-1 rounded overflow-hidden">
+                        <div className="absolute right-0 top-0 bottom-0 bg-red-500/10 pointer-events-none" style={{ width: `${depthPct}%` }} />
+                        <span className="font-bold text-red-400 z-10">{ord.price.toFixed(2)}</span>
+                        <span className="text-belmont-text-secondary z-10">{remaining} un</span>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+
+              {/* Spread Indicator Line (Section 16) */}
+              <div className="py-1.5 px-2 rounded-lg bg-belmont-surface/80 border border-belmont-border/80 flex items-center justify-between text-[11px]">
+                <span className="text-belmont-text-muted">────── SPREAD ──────</span>
+                <span className="font-bold text-amber-300">{spread.toFixed(2)} Coins</span>
+              </div>
+
+              {/* Bids (Buy Orders - Bottom Green) */}
+              <div className="space-y-1">
+                <div className="flex justify-between text-[10px] text-emerald-400 font-bold pb-1">
+                  <span>BIDS (COMPRA)</span>
+                  <span>PREÇO / QTD</span>
+                </div>
+                {orderBook.buyOrders.length === 0 ? (
+                  <p className="text-[10px] text-belmont-text-muted text-center py-2">Sem ordens de compra</p>
+                ) : (
+                  orderBook.buyOrders.slice(0, 4).map((ord) => {
+                    const remaining = ord.quantity - ord.filled_quantity
+                    const depthPct = Math.min(100, Math.max(5, (remaining / orderBook.maxQuantity) * 100))
+                    return (
+                      <div key={ord.id} className="relative flex items-center justify-between p-1 rounded overflow-hidden">
+                        <div className="absolute right-0 top-0 bottom-0 bg-emerald-500/10 pointer-events-none" style={{ width: `${depthPct}%` }} />
+                        <span className="font-bold text-emerald-400 z-10">{ord.price.toFixed(2)}</span>
+                        <span className="text-belmont-text-secondary z-10">{remaining} un</span>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+            </div>
+
+            {/* Formulário Compacto de Ordens (Section 19) */}
+            <div className="glass-panel rounded-2xl p-4 border border-belmont-border space-y-3 bg-slate-950/60 text-xs">
               {feedback && (
-                <div
-                  className={`p-3 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
-                    feedback.type === 'success'
-                      ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
-                      : 'bg-red-500/10 border-red-500/20 text-red-400'
-                  }`}
-                >
-                  {feedback.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertTriangle className="w-4 h-4 shrink-0" />}
+                <div className={`p-2.5 rounded-xl border text-xs font-semibold flex items-center gap-2 ${feedback.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300' : 'bg-red-500/10 border-red-500/20 text-red-400'}`}>
+                  {feedback.type === 'success' ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> : <AlertTriangle className="w-3.5 h-3.5 shrink-0" />}
                   <span>{feedback.message}</span>
                 </div>
               )}
 
-              {/* Order Side Selector: Buy vs Sell */}
-              <div className="grid grid-cols-2 gap-2 p-1 bg-belmont-surface/80 rounded-xl border border-belmont-border">
+              {/* Side Selector: COMPRAR | VENDER */}
+              <div className="grid grid-cols-2 gap-1.5 p-1 bg-belmont-surface/80 rounded-xl border border-belmont-border">
                 <button
                   type="button"
                   onClick={() => setOrderSide('buy')}
-                  className={`py-2 rounded-lg text-xs font-bold transition-all ${
-                    orderSide === 'buy' ? 'bg-emerald-500 text-slate-950 shadow-md' : 'text-belmont-text-muted hover:text-white'
-                  }`}
+                  className={`py-1.5 rounded-lg text-xs font-bold transition-all ${orderSide === 'buy' ? 'bg-emerald-500 text-slate-950 font-extrabold' : 'text-belmont-text-muted hover:text-white'}`}
                 >
-                  Comprar
+                  COMPRAR
                 </button>
                 <button
                   type="button"
                   onClick={() => setOrderSide('sell')}
-                  className={`py-2 rounded-lg text-xs font-bold transition-all ${
-                    orderSide === 'sell' ? 'bg-red-500 text-white shadow-md' : 'text-belmont-text-muted hover:text-white'
-                  }`}
+                  className={`py-2 rounded-lg text-xs font-bold transition-all ${orderSide === 'sell' ? 'bg-red-500 text-white font-extrabold' : 'text-belmont-text-muted hover:text-white'}`}
                 >
-                  Vender
+                  VENDER
                 </button>
               </div>
 
-              {/* Order Type Selector: Limit vs Market */}
-              <div className="flex items-center gap-2 text-xs">
-                <span className="text-belmont-text-muted">Tipo:</span>
-                <button
-                  type="button"
-                  onClick={() => setOrderType('limit')}
-                  className={`px-3 py-1 rounded-lg font-bold border transition-all ${
-                    orderType === 'limit'
-                      ? 'bg-belmont-surface border-belmont-rose text-white'
-                      : 'border-belmont-border/60 text-belmont-text-muted hover:text-white'
-                  }`}
-                >
-                  LIMIT
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setOrderType('market')}
-                  className={`px-3 py-1 rounded-lg font-bold border transition-all ${
-                    orderType === 'market'
-                      ? 'bg-belmont-surface border-belmont-rose text-white'
-                      : 'border-belmont-border/60 text-belmont-text-muted hover:text-white'
-                  }`}
-                >
-                  MARKET
-                </button>
-              </div>
-
-              {orderType === 'market' && (
-                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 flex items-start gap-2">
-                  <Info className="w-4 h-4 shrink-0 mt-0.5" />
-                  <span>
-                    Ordem a Mercado: O preço é estimado com base no melhor topo do livro de ofertas. A execução dependerá da liquidez disponível.
-                  </span>
+              {/* Type Selector: LIMIT | MARKET */}
+              <div className="flex items-center justify-between text-[11px] font-mono">
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setOrderType('limit')}
+                    className={`px-2.5 py-0.5 rounded font-bold border transition-all ${orderType === 'limit' ? 'bg-belmont-surface border-belmont-rose text-white' : 'border-belmont-border/60 text-belmont-text-muted'}`}
+                  >
+                    LIMIT
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOrderType('market')}
+                    className={`px-2.5 py-0.5 rounded font-bold border transition-all ${orderType === 'market' ? 'bg-belmont-surface border-belmont-rose text-white' : 'border-belmont-border/60 text-belmont-text-muted'}`}
+                  >
+                    MARKET
+                  </button>
                 </div>
-              )}
+                <span className="text-amber-300 font-bold">
+                  {orderSide === 'buy' ? `${userCoins} Coins` : `${userHoldingForSelected?.quantity || 0} un`}
+                </span>
+              </div>
 
-              <form onSubmit={handlePlaceOrder} className="space-y-4">
+              <form onSubmit={handlePlaceOrder} className="space-y-3">
                 <Input
-                  label="Preço por Unidade (Coins)"
+                  label="Preço (Coins)"
                   type="number"
                   value={priceInput}
                   onChange={(e) => setPriceInput(e.target.value)}
@@ -633,32 +415,19 @@ export default function MarketPage() {
                   required
                 />
 
-                <div className="space-y-1.5">
+                <div className="space-y-1">
                   <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-belmont-text-secondary">Quantidade de Unidades</label>
-                    <button
-                      type="button"
-                      onClick={handleSetMaxQuantity}
-                      className="text-[10px] font-bold text-amber-400 hover:underline uppercase"
-                    >
-                      [ Usar Máximo ]
+                    <label className="text-[11px] font-semibold text-belmont-text-secondary">Quantidade</label>
+                    <button type="button" onClick={handleSetMaxQuantity} className="text-[10px] font-bold text-amber-400 hover:underline uppercase">
+                      [ Usar Máx ]
                     </button>
                   </div>
-                  <Input
-                    type="number"
-                    placeholder="Ex: 10"
-                    value={quantityInput}
-                    onChange={(e) => setQuantityInput(e.target.value)}
-                    required
-                  />
+                  <Input type="number" placeholder="Ex: 10" value={quantityInput} onChange={(e) => setQuantityInput(e.target.value)} required />
                 </div>
 
-                {/* Estimated Total Calculation */}
-                <div className="p-3 rounded-xl bg-belmont-surface/70 border border-belmont-border space-y-1 text-xs">
-                  <div className="flex justify-between text-belmont-text-secondary">
-                    <span>{orderSide === 'buy' ? 'Custo Estimado:' : 'Recebível Estimado:'}</span>
-                    <span className="font-bold text-amber-300 font-mono">{calculatedCost.toLocaleString('pt-BR')} Coins</span>
-                  </div>
+                <div className="p-2 rounded-xl bg-belmont-surface/70 border border-belmont-border flex justify-between text-xs font-mono">
+                  <span className="text-belmont-text-muted">{orderSide === 'buy' ? 'Custo:' : 'Recebível:'}</span>
+                  <span className="font-bold text-amber-300">{calculatedCost.toLocaleString('pt-BR')} Coins</span>
                 </div>
 
                 <Button
@@ -666,142 +435,131 @@ export default function MarketPage() {
                   variant={orderSide === 'buy' ? 'success' : 'crimson'}
                   size="md"
                   fullWidth
-                  leftIcon={orderSide === 'buy' ? <ArrowDownLeft className="w-4 h-4" /> : <ArrowUpRight className="w-4 h-4" />}
+                  leftIcon={orderSide === 'buy' ? <ArrowDownLeft className="w-3.5 h-3.5" /> : <ArrowUpRight className="w-3.5 h-3.5" />}
                 >
                   Confirmar {orderSide === 'buy' ? 'Compra' : 'Venda'}
                 </Button>
               </form>
             </div>
-
-            {/* Filterable User Orders Panel (Requirement 16) */}
-            <div className="glass-panel rounded-3xl p-6 border border-belmont-border space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-belmont-border">
-                <h3 className="text-sm font-bold font-display text-belmont-text-primary uppercase tracking-wider flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-belmont-rose" />
-                  Minhas Ordens
-                </h3>
-
-                {/* Order Status Filters */}
-                <div className="flex items-center gap-1 text-[11px]">
-                  {(
-                    [
-                      { id: 'pending', label: 'ATIVAS' },
-                      { id: 'filled', label: 'EXECUTADAS' },
-                      { id: 'cancelled', label: 'CANCELADAS' },
-                      { id: 'all', label: 'TODAS' },
-                    ] as const
-                  ).map((f) => (
-                    <button
-                      key={f.id}
-                      onClick={() => setOrdersFilter(f.id)}
-                      className={`px-2 py-0.5 rounded-md font-bold transition-all ${
-                        ordersFilter === f.id
-                          ? 'bg-belmont-crimson text-white'
-                          : 'text-belmont-text-muted hover:text-white'
-                      }`}
-                    >
-                      {f.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {filteredUserOrders.length === 0 ? (
-                <p className="text-xs text-belmont-text-muted py-4">Nenhuma ordem encontrada neste filtro.</p>
-              ) : (
-                <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
-                  {filteredUserOrders.map((ord) => {
-                    const remaining = ord.quantity - ord.filled_quantity
-                    const timeStr = new Date(ord.created_at).toLocaleTimeString('pt-BR', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })
-
-                    return (
-                      <div
-                        key={ord.id}
-                        className="p-3 rounded-xl bg-belmont-surface/50 border border-belmont-border space-y-2 text-xs"
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <Badge variant={ord.side === 'buy' ? 'success' : 'crimson'} size="sm">
-                              {ord.side.toUpperCase()}
-                            </Badge>
-                            <span className="font-bold text-belmont-text-primary">{ord.asset?.symbol}</span>
-                            <span className="text-[10px] text-belmont-text-muted uppercase">({ord.order_type})</span>
-                          </div>
-                          <Badge
-                            variant={ord.status === 'pending' ? 'gold' : ord.status === 'filled' ? 'success' : 'outline'}
-                            size="sm"
-                          >
-                            {ord.status.toUpperCase()}
-                          </Badge>
-                        </div>
-
-                        <div className="flex items-center justify-between text-belmont-text-muted font-mono text-[11px]">
-                          <span>
-                            {ord.filled_quantity}/{ord.quantity} un @ {ord.price} Coins
-                          </span>
-                          <span>{timeStr}</span>
-                        </div>
-
-                        {ord.status === 'pending' && (
-                          <div className="pt-1 flex justify-end">
-                            <button
-                              onClick={() => handleCancelOrder(ord.id)}
-                              className="text-red-400 hover:text-red-300 text-[10px] font-bold flex items-center gap-1 hover:underline"
-                            >
-                              <XCircle className="w-3.5 h-3.5" /> Cancelar Ordem
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
           </div>
         </div>
       )}
 
-      {/* User Portfolio Holdings Summary */}
-      <div className="glass-panel rounded-3xl p-6 border border-belmont-border space-y-4">
-        <h3 className="text-base font-bold font-display text-belmont-text-primary flex items-center gap-2">
-          <Briefcase className="w-5 h-5 text-amber-400" />
-          Seus Investimentos em Ativos da Mansão
-        </h3>
-
-        {holdings.length === 0 ? (
-          <EmptyState
-            icon={<Briefcase className="w-6 h-6 text-amber-400" />}
-            title="Sua carteira de ativos está vazia."
-            description="Emita ordens de compra na Bolsa Belmont para começar a investir."
-          />
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {holdings.map((h) => {
-              const currentVal = h.quantity * (h.asset?.current_price || 0)
-              const costVal = h.quantity * h.average_price
-              const pnl = currentVal - costVal
-              const isProfit = pnl >= 0
-
-              return (
-                <div key={h.id} className="p-4 rounded-2xl bg-belmont-surface/60 border border-belmont-border space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-sm font-display text-belmont-text-primary">{h.asset?.symbol}</span>
-                    <Badge variant={isProfit ? 'success' : 'crimson'} size="sm">
-                      {isProfit ? `+${pnl} Coins` : `${pnl} Coins`}
-                    </Badge>
-                  </div>
-                  <p className="text-xs text-belmont-text-muted">{h.quantity} unidades em carteira</p>
-                  <p className="text-sm font-extrabold text-amber-300 font-display">Valor Atual: {currentVal} Coins</p>
-                </div>
-              )
-            })}
+      {/* 3. Bottom Compact Row: Statistics + Orders + Holdings (Section 18 & 20) */}
+      {selectedAsset && (
+        <div className="space-y-4">
+          {/* Faixa Compacta de Estatísticas 24h (Section 18) */}
+          <div className="glass-panel p-3 rounded-2xl border border-belmont-border flex flex-wrap items-center justify-between gap-3 text-xs font-mono bg-slate-950/50">
+            <div>
+              <span className="text-belmont-text-muted text-[10px] uppercase block">Último Preço</span>
+              <span className="font-bold text-amber-300">{selectedAsset.current_price} Coins</span>
+            </div>
+            <div>
+              <span className="text-belmont-text-muted text-[10px] uppercase block">Variação 24h</span>
+              <span className={`font-bold ${selectedAsset.change_24h >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                {selectedAsset.change_24h >= 0 ? `+${selectedAsset.change_24h}%` : `${selectedAsset.change_24h}%`}
+              </span>
+            </div>
+            <div>
+              <span className="text-belmont-text-muted text-[10px] uppercase block">Máxima 24h</span>
+              <span className="font-bold text-emerald-400">{selectedAsset.high_24h || selectedAsset.current_price}</span>
+            </div>
+            <div>
+              <span className="text-belmont-text-muted text-[10px] uppercase block">Mínima 24h</span>
+              <span className="font-bold text-red-400">{selectedAsset.low_24h || selectedAsset.current_price}</span>
+            </div>
+            <div>
+              <span className="text-belmont-text-muted text-[10px] uppercase block">Volume 24h</span>
+              <span className="font-bold text-amber-300">{selectedAsset.volume_24h?.toLocaleString('pt-BR') || 0} Coins</span>
+            </div>
+            <div>
+              <span className="text-belmont-text-muted text-[10px] uppercase block">Trades 24h</span>
+              <span className="font-bold text-belmont-text-primary">{selectedAsset.trades_24h_count || 0}</span>
+            </div>
+            <div>
+              <span className="text-belmont-text-muted text-[10px] uppercase block">Spread</span>
+              <span className="font-bold text-amber-300">{spread.toFixed(2)} Coins</span>
+            </div>
           </div>
-        )}
-      </div>
+
+          {/* Minhas Ordens (Section 20 & 21: Estado Vazio Compacto) */}
+          <div className="glass-panel rounded-2xl p-4 border border-belmont-border space-y-3 bg-slate-950/50">
+            <div className="flex items-center justify-between pb-2 border-b border-belmont-border">
+              <h3 className="text-xs font-bold font-mono text-belmont-text-primary uppercase tracking-wider flex items-center gap-2">
+                <Layers className="w-3.5 h-3.5 text-belmont-rose" />
+                Minhas Ordens
+              </h3>
+              <div className="flex items-center gap-1 text-[10px] font-mono">
+                {([{ id: 'pending', label: 'ATIVAS' }, { id: 'filled', label: 'EXECUTADAS' }, { id: 'cancelled', label: 'CANCELADAS' }, { id: 'all', label: 'TODAS' }] as const).map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => setOrdersFilter(f.id)}
+                    className={`px-2 py-0.5 rounded font-bold transition-all ${ordersFilter === f.id ? 'bg-belmont-crimson text-white' : 'text-belmont-text-muted hover:text-white'}`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {filteredUserOrders.length === 0 ? (
+              /* Section 21: Compact Clean Empty State */
+              <p className="text-xs text-belmont-text-muted py-2 font-mono">Você não possui ordens abertas.</p>
+            ) : (
+              <div className="space-y-1.5 max-h-48 overflow-y-auto font-mono text-xs pr-1">
+                {filteredUserOrders.map((ord) => (
+                  <div key={ord.id} className="p-2 rounded-lg bg-belmont-surface/40 border border-belmont-border flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Badge variant={ord.side === 'buy' ? 'success' : 'crimson'} size="sm">{ord.side.toUpperCase()}</Badge>
+                      <span className="font-bold text-belmont-text-primary">{ord.asset?.symbol}</span>
+                      <span className="text-[11px] text-belmont-text-muted">{ord.filled_quantity}/{ord.quantity} un @ {ord.price} Coins</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={ord.status === 'pending' ? 'gold' : 'outline'} size="sm">{ord.status.toUpperCase()}</Badge>
+                      {ord.status === 'pending' && (
+                        <button onClick={() => handleCancelOrder(ord.id)} className="text-red-400 hover:underline text-[10px] font-bold">
+                          Cancelar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Portfolio Investments Summary */}
+          {holdings.length > 0 && (
+            <div className="glass-panel rounded-2xl p-4 border border-belmont-border space-y-3 bg-slate-950/50">
+              <h3 className="text-xs font-bold font-mono text-belmont-text-primary uppercase tracking-wider flex items-center gap-2">
+                <Briefcase className="w-3.5 h-3.5 text-amber-400" />
+                Seus Investimentos na Bolsa
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {holdings.map((h) => {
+                  const currentVal = h.quantity * (h.asset?.current_price || 0)
+                  const costVal = h.quantity * h.average_price
+                  const pnl = currentVal - costVal
+                  const isProfit = pnl >= 0
+
+                  return (
+                    <div key={h.id} className="p-3 rounded-xl bg-belmont-surface/50 border border-belmont-border space-y-1 font-mono text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-belmont-text-primary">{h.asset?.symbol}</span>
+                        <Badge variant={isProfit ? 'success' : 'crimson'} size="sm">
+                          {isProfit ? `+${pnl} Coins` : `${pnl} Coins`}
+                        </Badge>
+                      </div>
+                      <p className="text-[11px] text-belmont-text-muted">{h.quantity} unidades em carteira</p>
+                      <p className="text-xs font-bold text-amber-300">Valor: {currentVal} Coins</p>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
