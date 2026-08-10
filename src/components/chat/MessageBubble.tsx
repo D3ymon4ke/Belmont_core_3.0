@@ -20,7 +20,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isCurrent
   return (
     <div
       className={clsx(
-        'flex items-end gap-2.5 my-2.5 max-w-[85%] sm:max-w-[75%]',
+        'flex items-end gap-2.5 my-2 max-w-[85%] sm:max-w-[75%]',
         isCurrentUser ? 'ml-auto flex-row-reverse' : 'mr-auto'
       )}
     >
@@ -29,31 +29,34 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isCurrent
           src={message.sender?.avatar_url}
           fallback={message.sender?.display_name || 'B'}
           size="sm"
+          className="shrink-0 mb-1"
         />
       )}
 
-      <div className="space-y-1">
+      <div className="space-y-0.5">
         {!isCurrentUser && (
           <div className="flex items-center gap-2 px-1">
-            <span className="text-[11px] font-semibold text-belmont-text-secondary">
+            <span className="text-[11px] font-bold text-belmont-text-primary">
               {message.sender?.display_name || 'Membro'}
             </span>
-            {message.sender?.is_admin && <Badge variant="crimson" size="sm">ADMIN</Badge>}
-            <span className="text-[10px] text-belmont-text-muted">{formattedTime}</span>
+            <Badge variant="gold" size="sm" className="text-[9px] px-1 py-0">
+              {message.sender?.rank_title || 'Iniciado'}
+            </Badge>
+            <span className="text-[9px] text-belmont-text-muted ml-auto">{formattedTime}</span>
           </div>
         )}
 
         <div
           className={clsx(
-            'px-4 py-2.5 rounded-2xl text-sm leading-relaxed break-words shadow-sm',
+            'px-3.5 py-2 rounded-2xl text-xs sm:text-sm leading-relaxed break-words shadow-sm',
             isCurrentUser
-              ? 'bg-gradient-to-r from-belmont-crimson to-belmont-rose text-white rounded-br-none shadow-belmont-glow'
-              : 'bg-belmont-surface-elevated/90 text-belmont-text-primary rounded-bl-none border border-belmont-border'
+              ? 'bg-belmont-crimson text-white rounded-br-none'
+              : 'bg-belmont-surface/90 text-belmont-text-primary rounded-bl-none border border-belmont-border'
           )}
         >
           <p>{message.content}</p>
           {isCurrentUser && (
-            <div className="text-[9px] text-right text-rose-200/70 mt-1">
+            <div className="text-[9px] text-right text-white/60 mt-0.5">
               {formattedTime}
             </div>
           )}

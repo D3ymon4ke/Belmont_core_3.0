@@ -1,13 +1,12 @@
 'use client'
 
 import React, { useState, useEffect, useRef } from 'react'
-import { MessageSquare, RefreshCcw, ShieldCheck, VolumeX } from 'lucide-react'
+import { RefreshCcw, VolumeX } from 'lucide-react'
 import { MessageBubble } from '@/components/chat/MessageBubble'
 import { ChatInput } from '@/components/chat/ChatInput'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { Badge } from '@/components/ui/Badge'
-import { getGeneralChatMessagesService, sendGeneralChatMessageService } from '@/lib/services/data'
+import { getGeneralChatMessagesService, sendGeneralChatMessageService, getAllProfilesService } from '@/lib/services/data'
 import { createClient } from '@/lib/supabase/client'
 import { Message } from '@/types'
 
@@ -15,6 +14,7 @@ export default function GeneralChatPage() {
   const supabase = createClient()
   const [messages, setMessages] = useState<Message[]>([])
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [onlineCount, setOnlineCount] = useState<number>(12)
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -22,8 +22,12 @@ export default function GeneralChatPage() {
   const fetchMessages = async (showRefreshIndicator = false) => {
     if (showRefreshIndicator) setIsRefreshing(true)
     try {
-      const data = await getGeneralChatMessagesService()
-      setMessages(data)
+      const [msgs, members] = await Promise.all([
+        getGeneralChatMessagesService(),
+        getAllProfilesService(),
+      ])
+      setMessages(msgs)
+      setOnlineCount(Math.max(1, members.length))
     } catch (e) {
       console.error(e)
     } finally {
@@ -60,49 +64,41 @@ export default function GeneralChatPage() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-8rem)] max-w-4xl mx-auto glass-panel rounded-3xl border border-belmont-border overflow-hidden animate-fadeIn">
-      {/* Chat Room Header */}
-      <div className="px-5 py-4 bg-belmont-surface/90 border-b border-belmont-border flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-belmont-crimson/20 border border-belmont-rose/30 flex items-center justify-center text-belmont-rose">
-            <MessageSquare className="w-5 h-5" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-base font-bold font-display text-belmont-text-primary">
-                Chat Geral Belmont
-              </h1>
-              <Badge variant="crimson" size="sm">SALA DE CONVIVÊNCIA</Badge>
-            </div>
-            <p className="text-[11px] text-belmont-text-muted flex items-center gap-1">
-              <ShieldCheck className="w-3 h-3 text-emerald-400" />
-              Canal Oficial da Mansão • Polling Ativo
-            </p>
-          </div>
+    <div className="flex flex-col h-[calc(100vh-8rem)] rounded-2xl bg-belmont-surface/60 border border-belmont-border overflow-hidden animate-fadeIn">
+      {/* Messenger Header */}
+      <div className="px-4 py-3 bg-belmont-surface/90 border-b border-belmont-border/60 flex items-center justify-between">
+        <div>
+          <h1 className="text-sm font-bold font-display text-belmont-text-primary tracking-wider uppercase">
+            CHAT DA MANSÃO
+          </h1>
+          <p className="text-[11px] text-emerald-400 font-medium flex items-center gap-1.5 mt-0.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span>● {onlineCount} presentes</span>
+          </p>
         </div>
 
         <button
           onClick={() => fetchMessages(true)}
-          className="p-2 text-belmont-text-muted hover:text-belmont-text-primary rounded-xl hover:bg-white/5 transition-colors"
+          className="p-1.5 text-belmont-text-muted hover:text-belmont-text-primary rounded-lg hover:bg-white/5 transition-colors"
           title="Atualizar mensagens"
         >
-          <RefreshCcw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-belmont-rose' : ''}`} />
+          <RefreshCcw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-belmont-rose' : ''}`} />
         </button>
       </div>
 
-      {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-1 bg-belmont-bg/50">
+      {/* Messages Feed Area */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-1 bg-belmont-bg/40">
         {isLoading ? (
-          <div className="space-y-4">
-            <Skeleton className="h-12 w-2/3 rounded-2xl" />
-            <Skeleton className="h-12 w-1/2 ml-auto rounded-2xl" />
-            <Skeleton className="h-12 w-3/4 rounded-2xl" />
+          <div className="space-y-3">
+            <Skeleton className="h-10 w-2/3 rounded-xl" />
+            <Skeleton className="h-10 w-1/2 ml-auto rounded-xl" />
+            <Skeleton className="h-10 w-3/4 rounded-xl" />
           </div>
         ) : messages.length === 0 ? (
           <EmptyState
             icon={<VolumeX className="w-6 h-6 text-belmont-rose" />}
             title="A sala está silenciosa."
-            description="Envie a primeira mensagem no Chat Geral da Mansão Belmont."
+            description="Envie a primeira mensagem no Chat da Mansão."
           />
         ) : (
           messages.map((msg) => (
@@ -116,8 +112,8 @@ export default function GeneralChatPage() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input Footer */}
-      <div className="p-3 bg-belmont-surface/90 border-t border-belmont-border">
+      {/* Fixed Composer Bottom */}
+      <div className="p-3 bg-belmont-surface/90 border-t border-belmont-border/60">
         <ChatInput onSendMessage={handleSendMessage} />
       </div>
     </div>

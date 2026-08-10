@@ -1,6 +1,7 @@
 import React from 'react'
 import { createClient } from '@/lib/supabase/server'
 import { Sidebar } from '@/components/layout/Sidebar'
+import { RightSidebar } from '@/components/layout/RightSidebar'
 import { Topbar } from '@/components/layout/Topbar'
 import { MobileNavigation } from '@/components/layout/MobileNavigation'
 import { Profile } from '@/types'
@@ -46,7 +47,6 @@ export default async function DashboardLayout({
           .select('*')
           .single()
 
-        // Also ensure user progress row exists
         await (supabase.from('user_progress') as any)
           .upsert({ user_id: user.id, xp: 0, rank_title: 'Iniciado' })
 
@@ -75,20 +75,29 @@ export default async function DashboardLayout({
   }
 
   return (
-    <div className="min-h-screen bg-belmont-bg text-belmont-text-primary flex">
-      {/* Desktop Sidebar */}
-      <Sidebar currentProfile={currentProfile} />
+    <div className="min-h-screen bg-belmont-bg text-belmont-text-primary flex justify-center">
+      <div className="w-full max-w-7xl flex">
+        {/* 1. Left Persistent Sidebar (Desktop) */}
+        <Sidebar currentProfile={currentProfile} />
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 min-h-screen pb-16 md:pb-0">
-        <Topbar currentProfile={currentProfile} />
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
-          {children}
-        </main>
+        {/* 2. Main Center Content Container */}
+        <div className="flex-1 flex flex-col min-w-0 min-h-screen pb-16 md:pb-0">
+          <Topbar currentProfile={currentProfile} />
+          
+          <div className="flex-1 flex gap-6 p-4 sm:p-6 justify-center">
+            {/* Center Protagonist Column */}
+            <main className="flex-1 max-w-2xl min-w-0 w-full">
+              {children}
+            </main>
+
+            {/* 3. Right Contextual Sidebar (Desktop) */}
+            <RightSidebar />
+          </div>
+        </div>
+
+        {/* Mobile Bottom Navigation */}
+        <MobileNavigation currentProfile={currentProfile} />
       </div>
-
-      {/* Mobile Bottom Navigation */}
-      <MobileNavigation currentProfile={currentProfile} />
     </div>
   )
 }

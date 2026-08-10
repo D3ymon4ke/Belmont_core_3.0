@@ -11,19 +11,19 @@ const config: Config = {
     extend: {
       colors: {
         belmont: {
-          bg: '#090a0f',
-          surface: '#11131b',
-          'surface-hover': '#161924',
-          'surface-elevated': '#181b26',
-          border: 'rgba(255, 255, 255, 0.08)',
-          'border-strong': 'rgba(255, 255, 255, 0.15)',
+          bg: '#08090d',
+          surface: '#0d0f16',
+          'surface-hover': '#131622',
+          'surface-elevated': '#171a28',
+          border: 'rgba(255, 255, 255, 0.07)',
+          'border-strong': 'rgba(255, 255, 255, 0.14)',
           crimson: '#8b1528',
           'crimson-light': '#a81c34',
           rose: '#e11d48',
           gold: '#d4af37',
           'gold-light': '#f3e5ab',
           text: {
-            primary: '#f8fafc',
+            primary: '#f1f5f9',
             secondary: '#94a3b8',
             muted: '#64748b',
           }
@@ -34,12 +34,13 @@ const config: Config = {
         display: ['var(--font-display)', 'system-ui', 'sans-serif'],
       },
       boxShadow: {
-        'belmont-glow': '0 0 25px -5px rgba(139, 21, 40, 0.3)',
-        'belmont-card': '0 8px 32px 0 rgba(0, 0, 0, 0.37)',
+        'belmont-glow': '0 0 20px -3px rgba(139, 21, 40, 0.25)',
+        'belmont-gold-glow': '0 0 20px -3px rgba(212, 175, 55, 0.25)',
+        'belmont-card': '0 4px 20px 0 rgba(0, 0, 0, 0.4)',
       },
       backgroundImage: {
-        'mansion-radial': 'radial-gradient(circle at 50% 0%, rgba(139, 21, 40, 0.15) 0%, transparent 60%)',
-        'mansion-card': 'linear-gradient(135deg, rgba(24, 27, 38, 0.8) 0%, rgba(17, 19, 27, 0.9) 100%)',
+        'mansion-radial': 'radial-gradient(circle at 50% 0%, rgba(139, 21, 40, 0.12) 0%, transparent 65%)',
+        'mansion-card': 'linear-gradient(135deg, rgba(20, 23, 34, 0.6) 0%, rgba(13, 15, 22, 0.7) 100%)',
       }
     },
   },
